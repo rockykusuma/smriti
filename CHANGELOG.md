@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7.1 — 2026-07-04
+
+- **Settings window**: menu bar → "Settings…" (⌘,) to switch the reply-assist
+  backend (Auto / Ollama / Claude) and pick the local model from a list
+  populated live from Ollama. Changes save to config.json and apply
+  immediately — the chosen model is re-warmed without a restart.
+
 ## v0.7.0 — 2026-07-04
 
 - **Hybrid model backend**: the reply assist now uses a local Ollama model
