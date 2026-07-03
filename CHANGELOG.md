@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.7.0 — 2026-07-04
+
+- **Hybrid model backend**: the reply assist now uses a local Ollama model
+  (default `llama3.2:latest`, kept resident) when Ollama is running —
+  sub-second first token, and reply text never leaves the Mac. Automatic
+  fallback to the warm Claude process on any failure. Configure via
+  `assistBackend` ("auto" | "ollama" | "claude") and `ollamaModel` in
+  config.json. Chronicles, tone learning, and meeting summaries stay on
+  Claude for quality.
+
 ## v0.6.0 — 2026-07-04
 
 - **Meeting recording with explicit consent**: when any app opens the

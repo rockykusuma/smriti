@@ -62,6 +62,19 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.statusItem.button?.image?.isTemplate = true
             self?.setHUDVisible(generating)
         }
+        switch config.assistBackend {
+        case "claude":
+            break
+        case "ollama":
+            assist.ollamaModel = config.ollamaModel
+            OllamaClient.warmUp(model: config.ollamaModel)
+        default: // auto
+            if OllamaClient.isReachable() {
+                assist.ollamaModel = config.ollamaModel
+                OllamaClient.warmUp(model: config.ollamaModel)
+                fputs("smriti assist: using local \(config.ollamaModel) (claude fallback)\n", stderr)
+            }
+        }
         assist.start()
 
         meetings = MeetingWatcher(store: store)
