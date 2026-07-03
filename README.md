@@ -16,9 +16,10 @@ server exposes that memory to Claude Desktop, so you can ask things like:
 > *"Find that error message I saw in Terminal yesterday."*
 > *"What did I read about FTS5 last week?"*
 
-**Everything stays on your Mac.** No cloud, no telemetry, no API keys. The
-only LLM involved is Claude via your existing subscription — Smriti itself
-contains no model at all.
+**Everything stays on your Mac.** No cloud, no telemetry, no API keys. Smriti
+ships no model of its own: the thinking is done by Claude via your existing
+subscription, or — for instant replies — by a local Ollama model you run
+yourself, so that text never leaves the machine.
 
 ## Why
 
@@ -40,6 +41,15 @@ in order:
    so text never leaves the Mac. Search is SQLite FTS5, not embeddings.
 
 ## Install
+
+**Homebrew** (easiest):
+
+```bash
+brew tap rockykusuma/smriti
+brew install smriti
+```
+
+**From source:**
 
 ```bash
 git clone https://github.com/rockykusuma/smriti.git && cd smriti
@@ -111,6 +121,34 @@ there's nothing sensible to reply to.
 Requires the menu bar app (`smriti menubar`) and, one time, the Input
 Monitoring permission alongside Accessibility.
 
+### Local or cloud replies (hybrid backend)
+
+Reply assist can draft with a **local Ollama model** or with **Claude**. When
+Ollama is running, drafts are generated on-device — the first token lands in
+well under a second and your reply text never leaves the Mac. If Ollama isn't
+reachable, Smriti automatically falls back to a pre-warmed Claude process, so
+the double-tap always works.
+
+Two config keys in `config.json` control it:
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `assistBackend` | `auto` (Ollama, fall back to Claude) · `ollama` · `claude` | `auto` |
+| `ollamaModel` | any installed Ollama model tag | `llama3.2:latest` |
+
+To use local replies, install [Ollama](https://ollama.com) and pull a small
+instruct model:
+
+```bash
+ollama pull llama3.2      # fast; great for short replies
+```
+
+Smriti keeps the chosen model resident so there's no cold-start cost. Switch
+the backend and model live from the menu bar → **Settings…** (⌘,) — the popups
+list every model Ollama reports, and changes apply immediately (the new model
+is re-warmed without a restart). Chronicles, tone learning, and meeting
+summaries always use Claude for quality, regardless of this setting.
+
 ## Usage
 
 ```bash
@@ -159,7 +197,8 @@ smriti (CLI)                       SmritiKit
   An idle window costs one row, not 720/hour.
 - **Data**: `~/Library/Application Support/Smriti/smriti.sqlite` (WAL).
   Deleting your memory = deleting that file.
-- **Config**: `~/Library/Application Support/Smriti/config.json`.
+- **Config**: `~/Library/Application Support/Smriti/config.json` — exclusions,
+  `retentionDays`, and the reply backend (`assistBackend`, `ollamaModel`).
 - **Logs** (agent mode): `~/Library/Logs/smriti.log`.
 
 ## Privacy model, honestly stated
