@@ -220,6 +220,38 @@ public final class Store {
         return Int(sqlite3_changes(db))
     }
 
+    /// Loose OR-match search for memory retrieval: any of the terms may
+    /// match, newest first, excluding snapshots seen in the last
+    /// `excludeRecentMinutes` (those are the current screen, not memory).
+    public func searchRelated(
+        terms: [String], excludeRecentMinutes: Int = 60, limit: Int = 3
+    ) throws -> [Snapshot] {
+        let cleaned = terms
+            .map { $0.replacingOccurrences(of: "\"", with: "") }
+            .filter { $0.count > 2 }
+        guard !cleaned.isEmpty else { return [] }
+        let query = cleaned.map { "\"\($0)\"" }.joined(separator: " OR ")
+        let sql = """
+            SELECT s.id, s.app, s.bundle_id, s.window_title, s.content, s.url,
+                   s.captured_at, s.last_seen_at
+            FROM snapshots_fts f
+            JOIN snapshots s ON s.id = f.rowid
+            WHERE snapshots_fts MATCH ?
+              AND s.last_seen_at < datetime('now', 'localtime', ?)
+            ORDER BY s.last_seen_at DESC
+            LIMIT ?;
+            """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT)
+        // 0 disables the recency exclusion (cutoff in the future).
+        let cutoff = excludeRecentMinutes > 0
+            ? "-\(excludeRecentMinutes) minutes" : "+1 minutes"
+        sqlite3_bind_text(stmt, 2, cutoff, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 3, Int32(limit))
+        return readSnapshots(stmt)
+    }
+
     /// Snapshot count for one local day (YYYY-MM-DD) — cheap, for UI.
     public func countForDay(_ day: String) throws -> Int {
         let stmt = try prepare(

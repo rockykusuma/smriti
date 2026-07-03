@@ -43,6 +43,9 @@ public final class AssistListener {
     /// Optional provider of a fresh-enough window capture (the capture
     /// daemon's last snapshot) so triggering doesn't re-walk the AX tree.
     var contextSource: (() -> AXReader.WindowCapture?)? // internal: only MenuBarApp wires it
+    /// Separate read-only connection for memory retrieval (never share a
+    /// SQLite connection across threads).
+    var memoryStore: Store?
 
     private var pollTimer: Timer?
     private let warmClaude = WarmClaude()
@@ -138,6 +141,19 @@ public final class AssistListener {
                 return
             }
             let draft = (self.copyAttribute(focused, kAXValueAttribute) as? String) ?? ""
+            let selection = (self.copyAttribute(focused, kAXSelectedTextAttribute) as? String) ?? ""
+
+            // Context-sensitive action, Goldfish-style without a picker:
+            // selected text → rewrite it; a draft in progress → continue it;
+            // an empty field → reply to the conversation.
+            let mode: AssistMode
+            if selection.trimmingCharacters(in: .whitespaces).count > 3 {
+                mode = .rewrite(selection)
+            } else if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
+                mode = .continueDraft(draft)
+            } else {
+                mode = .reply
+            }
 
             // 2. What is the conversation? Prefer the capture daemon's
             //    seconds-old snapshot; fall back to a live, time-boxed walk.
@@ -152,9 +168,30 @@ public final class AssistListener {
             // 3. Draft the reply, then insert. --strict-mcp-config skips the
             //    user's MCP servers — a reply draft doesn't need them and
             //    they can add many seconds of startup.
+            // Related memory: what Smriti has seen before about this thread.
+            var memorySection = ""
+            if let store = self.memoryStore {
+                let stop: Set<String> = ["the", "and", "for", "with", "chat",
+                    "new", "inbox", "google", "microsoft", "teams", "mail"]
+                let terms = capture.windowTitle
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { $0.count > 2 && !stop.contains($0.lowercased()) }
+                    .prefix(6)
+                if let related = try? store.searchRelated(terms: Array(terms)),
+                   !related.isEmpty {
+                    memorySection = "\n\n--- RELATED MEMORY (older captures, may help with facts/names) ---\n"
+                        + related.map {
+                            "[\($0.lastSeenAt)] \($0.app) — \($0.windowTitle)\n\($0.content.prefix(400))"
+                        }.joined(separator: "\n\n")
+                    fputs("smriti assist: +\(related.count) memory snippets\n", stderr)
+                }
+            }
+
             let started = Date()
-            let fullPrompt = AssistListener.prompt(capture: capture, draft: draft)
+            fputs("smriti assist: mode=\(mode.name)\n", stderr)
+            let fullPrompt = AssistListener.prompt(capture: capture, mode: mode, tone: ToneProfile.load())
                 + "\n(Disregard any earlier warmup exchange in this session.)"
+                + memorySection
                 + "\n\n--- WINDOW TEXT ---\n"
                 + String(capture.content.suffix(12_000))
 
@@ -199,8 +236,8 @@ public final class AssistListener {
                     fputs("smriti assist: warm claude unavailable, cold run\n", stderr)
                     DispatchQueue.global(qos: .userInitiated).async {
                         let reply = ((try? ClaudeCLI.run(
-                            prompt: AssistListener.prompt(capture: capture, draft: draft),
-                            stdin: String(capture.content.suffix(12_000)),
+                            prompt: fullPrompt,
+                            stdin: "",
                             extraArgs: ["--model", "haiku", "--strict-mcp-config"])) ?? "")
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         DispatchQueue.main.async {
@@ -217,36 +254,77 @@ public final class AssistListener {
         }
     }
 
-    private static func prompt(capture: AXReader.WindowCapture, draft: String) -> String {
-        var p = """
-        You are drafting a reply on behalf of the user, who has their cursor \
-        in a text input in \(capture.appName) (window: "\(capture.windowTitle)"\
-        \(capture.url.isEmpty ? "" : ", page: \(capture.url)")). \
-        Below (after --- WINDOW TEXT ---) is the visible text of that \
-        window — a chat thread, comment section, or similar. Identify what the user is replying to \
-        (the most recent message addressed to them, or the post nearest \
-        their input) and write the reply they would plausibly send.
+    enum AssistMode {
+        case reply
+        case continueDraft(String)
+        case rewrite(String)
 
-        Rules:
-        - Output ONLY the reply text. No preamble, no quotes around it, no markdown.
-        - Almost always draft a reply — chats, comment threads, emails, DMs, \
-          forum posts, and AI-assistant conversations all count. Only if the \
-          text is clearly not communication at all (a settings page, a code \
-          editor, a file listing), output exactly: NO_REPLY_CONTEXT
-        - Match the conversation's language, tone, and formality.
-        - Be concise — the length of a real chat message or comment, not an essay.
-        - Never invent facts, commitments, or dates the context doesn't support.
-        """
-        if !draft.isEmpty {
-            p += """
+        var name: String {
+            switch self {
+            case .reply: return "reply"
+            case .continueDraft: return "continue"
+            case .rewrite: return "rewrite"
+            }
+        }
+    }
 
+    private static func prompt(
+        capture: AXReader.WindowCapture, mode: AssistMode, tone: String?
+    ) -> String {
+        let place = "in \(capture.appName) (window: \"\(capture.windowTitle)\"" +
+            (capture.url.isEmpty ? ")" : ", page: \(capture.url))")
 
-            The user already started typing this draft — continue in its \
-            spirit and produce only the COMPLETION (the text that should \
-            follow what they typed): "\(draft.prefix(500))"
+        var task: String
+        switch mode {
+        case .reply:
+            task = """
+            The user has their cursor in an empty text input \(place). \
+            Below (after --- WINDOW TEXT ---) is the visible text of that \
+            window — a chat thread, comment section, or similar. Identify \
+            what the user is replying to (the most recent message addressed \
+            to them, or the post nearest their input) and write the reply \
+            they would plausibly send.
+            """
+        case .continueDraft(let draft):
+            task = """
+            The user is composing a message \(place) and has typed this \
+            unfinished draft: "\(draft.prefix(800))". Using the window text \
+            below for context, write ONLY the continuation — the text that \
+            should follow what they already typed. Do not repeat any part \
+            of the draft.
+            """
+        case .rewrite(let selection):
+            task = """
+            The user selected this text \(place): "\(selection.prefix(1_500))". \
+            Rewrite it — clearer, better flowing, same meaning, same \
+            language, roughly the same length. The window text below gives \
+            context. Output ONLY the rewritten text; it will replace the \
+            selection.
             """
         }
-        return p
+
+        task += """
+
+
+        Rules:
+        - Output ONLY the text to insert. No preamble, no quotes around it, no markdown.
+        - Match the conversation's language, tone, and formality.
+        - Be concise — the length of a real message, not an essay.
+        - Never invent facts, commitments, or dates the context doesn't support.
+        - Almost always produce text. Only if the window is clearly not \
+          communication at all (a settings page, a file listing), output \
+          exactly: NO_REPLY_CONTEXT
+        """
+
+        if let tone {
+            task += """
+
+
+            The user's writing style (follow it):
+            \(tone.prefix(1_500))
+            """
+        }
+        return task
     }
 
     // MARK: - Streaming typist

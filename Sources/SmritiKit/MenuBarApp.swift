@@ -42,6 +42,9 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         daemon.start()
 
+        // Second connection: WAL allows concurrent readers; never share one
+        // sqlite handle across threads.
+        assist.memoryStore = try? Store(dbPath: config.databasePath)
         assist.contextSource = { [weak self] in
             guard let last = self?.daemon.lastWindowCapture,
                   Date().timeIntervalSince(last.at) < 10,
@@ -106,6 +109,13 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let tone = NSMenuItem(
+            title: ToneProfile.load() == nil
+                ? "Learn my writing tone" : "Refresh my writing tone",
+            action: #selector(learnTone), keyEquivalent: "")
+        tone.target = self
+        menu.addItem(tone)
+
         let chronicle = NSMenuItem(
             title: "Write today's chronicle",
             action: #selector(chronicleToday), keyEquivalent: "")
@@ -147,6 +157,18 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // process would also work, but patching the exclusion live is nicer.
         daemon.addExclusion(bundleId: last.bundleId)
         notify(title: "Smriti", body: "\(last.name) will never be captured.")
+    }
+
+    @objc private func learnTone() {
+        notify(title: "Smriti", body: "Learning your writing tone…")
+        DispatchQueue.global(qos: .utility).async { [store] in
+            do {
+                _ = try ToneProfile.learn(store: store)
+                self.notify(title: "Smriti", body: "Tone profile saved — replies will sound like you.")
+            } catch {
+                self.notify(title: "Smriti", body: "Tone learning failed: \(error)")
+            }
+        }
     }
 
     @objc private func chronicleToday() {
