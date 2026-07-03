@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.0 — 2026-07-04
+
+- **Streaming replies**: reply assist types the draft progressively as
+  Claude generates it (`--include-partial-messages`); first words land in
+  ~2s of model time. The decline sentinel is buffered and never typed.
+- **Context from memory**: the assist reuses the capture daemon's
+  seconds-old snapshot instead of re-walking the accessibility tree
+  (walks of large Electron trees cost up to 2s); falls back to a live
+  time-boxed walk when the snapshot is stale or the app is excluded.
+
 ## v0.3.0 — 2026-07-04
 
 - **Warm Claude pool**: reply assist now keeps a pre-warmed `claude`

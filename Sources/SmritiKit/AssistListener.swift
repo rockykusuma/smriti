@@ -40,6 +40,9 @@ public final class AssistListener {
     public private(set) var isEnabled = true
     /// Called on the main queue when generation starts/stops (for icon state).
     public var onGeneratingChange: ((Bool) -> Void)?
+    /// Optional provider of a fresh-enough window capture (the capture
+    /// daemon's last snapshot) so triggering doesn't re-walk the AX tree.
+    var contextSource: (() -> AXReader.WindowCapture?)? // internal: only MenuBarApp wires it
 
     private var pollTimer: Timer?
     private let warmClaude = WarmClaude()
@@ -136,49 +139,80 @@ public final class AssistListener {
             }
             let draft = (self.copyAttribute(focused, kAXValueAttribute) as? String) ?? ""
 
-            // 2. What is the conversation? Reuse the capture pipeline,
-            //    time-boxed so huge Electron trees can't stall us.
-            guard let capture = AXReader.captureFrontmost(timeBudget: 2.0) else {
+            // 2. What is the conversation? Prefer the capture daemon's
+            //    seconds-old snapshot; fall back to a live, time-boxed walk.
+            let cached = self.contextSource?()
+            guard let capture = cached ?? AXReader.captureFrontmost(timeBudget: 2.0) else {
                 fputs("smriti assist: could not read window context\n", stderr)
                 NSSound.beep()
                 return
             }
-            fputs("smriti assist: context \(capture.content.count) chars from \(capture.appName), drafting…\n", stderr)
+            fputs("smriti assist: context \(capture.content.count) chars from \(capture.appName) (\(cached != nil ? "cached" : "live")), drafting…\n", stderr)
 
             // 3. Draft the reply, then insert. --strict-mcp-config skips the
             //    user's MCP servers — a reply draft doesn't need them and
             //    they can add many seconds of startup.
             let started = Date()
-            do {
-                let fullPrompt = AssistListener.prompt(capture: capture, draft: draft)
-                    + "\n(Disregard any earlier warmup exchange in this session.)"
-                    + "\n\n--- WINDOW TEXT ---\n"
-                    + String(capture.content.suffix(12_000))
-                let raw: String
-                if let warm = self.warmClaude.request(fullPrompt) {
-                    raw = warm
+            let fullPrompt = AssistListener.prompt(capture: capture, draft: draft)
+                + "\n(Disregard any earlier warmup exchange in this session.)"
+                + "\n\n--- WINDOW TEXT ---\n"
+                + String(capture.content.suffix(12_000))
+
+            // Stream: type fragments as they arrive. The first fragments are
+            // buffered until we're sure the model isn't declining with the
+            // NO_REPLY_CONTEXT sentinel — that must never reach the field.
+            let typist = StreamTypist(
+                threshold: 24,
+                sentinel: "NO_REPLY_CONTEXT",
+                begin: { [weak self] in
+                    AXUIElementSetAttributeValue(
+                        focused, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    usleep(80_000)
+                    _ = self // keep self alive for typing
+                },
+                type: { [weak self] text in self?.typeUnicode(text) }
+            )
+
+            var firstDeltaAt: Date?
+            let raw = self.warmClaude.request(fullPrompt) { fragment in
+                if firstDeltaAt == nil {
+                    firstDeltaAt = Date()
+                    fputs("smriti assist: first tokens after \(String(format: "%.1f", Date().timeIntervalSince(started)))s\n", stderr)
+                }
+                DispatchQueue.main.async { typist.feed(fragment) }
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let raw {
+                    let outcome = typist.finish(fullText: raw)
+                    switch outcome {
+                    case .typed(let count):
+                        NSSound(named: "Glass")?.play()
+                        fputs("smriti assist: reply streamed (\(count) chars, total \(String(format: "%.1f", Date().timeIntervalSince(started)))s)\n", stderr)
+                    case .declined:
+                        fputs("smriti assist: nothing to reply to here\n", stderr)
+                        NSSound.beep()
+                    }
                 } else {
+                    // Warm process failed — cold, non-streaming fallback.
                     fputs("smriti assist: warm claude unavailable, cold run\n", stderr)
-                    raw = try ClaudeCLI.run(
-                        prompt: AssistListener.prompt(capture: capture, draft: draft),
-                        stdin: String(capture.content.suffix(12_000)),
-                        extraArgs: ["--model", "haiku", "--strict-mcp-config"])
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let reply = ((try? ClaudeCLI.run(
+                            prompt: AssistListener.prompt(capture: capture, draft: draft),
+                            stdin: String(capture.content.suffix(12_000)),
+                            extraArgs: ["--model", "haiku", "--strict-mcp-config"])) ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        DispatchQueue.main.async {
+                            guard !reply.isEmpty, !reply.contains("NO_REPLY_CONTEXT") else {
+                                NSSound.beep()
+                                return
+                            }
+                            self.insert(reply, into: focused)
+                            NSSound(named: "Glass")?.play()
+                        }
+                    }
                 }
-                let reply = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                fputs("smriti assist: drafted in \(String(format: "%.1f", Date().timeIntervalSince(started)))s\n", stderr)
-                guard !reply.isEmpty, !reply.contains("NO_REPLY_CONTEXT") else {
-                    fputs("smriti assist: nothing to reply to here\n", stderr)
-                    NSSound.beep()
-                    return
-                }
-                DispatchQueue.main.async {
-                    self.insert(reply, into: focused)
-                    NSSound(named: "Glass")?.play() // audible: reply delivered
-                    fputs("smriti assist: reply typed (\(reply.count) chars)\n", stderr)
-                }
-            } catch {
-                fputs("smriti assist: \(error)\n", stderr)
-                NSSound.beep()
             }
         }
     }
@@ -213,6 +247,69 @@ public final class AssistListener {
             """
         }
         return p
+    }
+
+    // MARK: - Streaming typist
+
+    /// Types streamed fragments into the focused field, holding back the
+    /// first `threshold` characters until it's clear the reply isn't the
+    /// decline sentinel. Main-thread only.
+    final class StreamTypist {
+        enum Outcome { case typed(Int); case declined }
+
+        private let threshold: Int
+        private let sentinel: String
+        private let begin: () -> Void
+        private let type: (String) -> Void
+        private var pending = ""
+        private var startedTyping = false
+        private var declined = false
+        private var typedCount = 0
+
+        init(threshold: Int, sentinel: String,
+             begin: @escaping () -> Void, type: @escaping (String) -> Void) {
+            self.threshold = threshold
+            self.sentinel = sentinel
+            self.begin = begin
+            self.type = type
+        }
+
+        func feed(_ fragment: String) {
+            guard !declined else { return }
+            pending += fragment
+            if !startedTyping {
+                if pending.contains(sentinel) { declined = true; pending = ""; return }
+                guard pending.count >= threshold else { return }
+                // Long enough to rule the sentinel out (it would have matched).
+                guard !sentinel.hasPrefix(pending.prefix(sentinel.count)) else { return }
+                begin()
+                startedTyping = true
+            }
+            type(pending)
+            typedCount += pending.count
+            pending = ""
+        }
+
+        /// Called with the complete text once the result event arrives —
+        /// flushes anything still buffered (short replies never hit the
+        /// threshold during streaming).
+        func finish(fullText: String) -> Outcome {
+            let trimmed = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if declined || trimmed.contains(sentinel) || trimmed.isEmpty {
+                return .declined
+            }
+            if !startedTyping {
+                begin()
+                startedTyping = true
+                type(trimmed)
+                typedCount = trimmed.count
+            } else if !pending.isEmpty {
+                type(pending)
+                typedCount += pending.count
+                pending = ""
+            }
+            return .typed(typedCount)
+        }
     }
 
     // MARK: - Insertion

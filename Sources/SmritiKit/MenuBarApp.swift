@@ -42,6 +42,14 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         daemon.start()
 
+        assist.contextSource = { [weak self] in
+            guard let last = self?.daemon.lastWindowCapture,
+                  Date().timeIntervalSince(last.at) < 10,
+                  last.capture.bundleId
+                      == NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            else { return nil }
+            return last.capture
+        }
         assist.onGeneratingChange = { [weak self] generating in
             self?.statusItem.button?.image = NSImage(
                 systemSymbolName: generating ? "ellipsis.bubble" : "brain",

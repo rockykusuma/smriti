@@ -20,15 +20,20 @@ public final class WarmClaude {
     }
 
     /// Send one request; returns the reply text, or nil on failure/timeout.
+    /// `onDelta` is called with text fragments as the model streams them.
     /// Always leaves a fresh process warming for the next request.
-    public func request(_ text: String, timeout: TimeInterval = 90) -> String? {
+    public func request(
+        _ text: String,
+        timeout: TimeInterval = 90,
+        onDelta: ((String) -> Void)? = nil
+    ) -> String? {
         lock.lock()
         defer {
             respawn()
             lock.unlock()
         }
         guard process?.isRunning == true else { return nil }
-        return turn(text, timeout: timeout)
+        return turn(text, timeout: timeout, onDelta: onDelta)
     }
 
     // MARK: - Process management
@@ -49,6 +54,7 @@ public final class WarmClaude {
             "--output-format", "stream-json",
             "--model", "haiku",
             "--strict-mcp-config",
+            "--include-partial-messages",
             "--verbose",
         ]
         p.currentDirectoryURL = FileManager.default.temporaryDirectory
@@ -85,7 +91,9 @@ public final class WarmClaude {
     // MARK: - Protocol
 
     /// Write one user message, block until the matching `result` event.
-    private func turn(_ text: String, timeout: TimeInterval) -> String? {
+    private func turn(
+        _ text: String, timeout: TimeInterval, onDelta: ((String) -> Void)? = nil
+    ) -> String? {
         guard let stdinHandle, let stdoutHandle else { return nil }
         let message: [String: Any] = [
             "type": "user",
@@ -111,14 +119,23 @@ public final class WarmClaude {
             while let newline = buffer.firstIndex(of: 0x0A) {
                 let line = buffer.prefix(upTo: newline)
                 buffer = Data(buffer.suffix(from: buffer.index(after: newline)))
-                guard
-                    let event = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
-                    event["type"] as? String == "result"
+                guard let event = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
                 else { continue }
-                if let result = event["result"] as? String {
-                    return result
+                switch event["type"] as? String {
+                case "stream_event":
+                    if let onDelta,
+                       let inner = event["event"] as? [String: Any],
+                       inner["type"] as? String == "content_block_delta",
+                       let delta = inner["delta"] as? [String: Any],
+                       delta["type"] as? String == "text_delta",
+                       let fragment = delta["text"] as? String {
+                        onDelta(fragment)
+                    }
+                case "result":
+                    return event["result"] as? String // nil = error result
+                default:
+                    break
                 }
-                return nil // result event without text = error result
             }
         }
         return nil // timeout
