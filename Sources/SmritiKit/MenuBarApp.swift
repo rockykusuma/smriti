@@ -12,6 +12,9 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let assist = AssistListener()
     private var meetings: MeetingWatcher!
     private lazy var meetingsBrowser = MeetingsBrowser(store: store)
+    private lazy var settings = SettingsWindow(config: config) { [weak self] updated in
+        self?.applySettings(updated)
+    }
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
@@ -163,6 +166,11 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(open)
         }
 
+        let prefs = NSMenuItem(
+            title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        prefs.target = self
+        menu.addItem(prefs)
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
@@ -190,6 +198,29 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // process would also work, but patching the exclusion live is nicer.
         daemon.addExclusion(bundleId: last.bundleId)
         notify(title: "Smriti", body: "\(last.name) will never be captured.")
+    }
+
+    @objc private func openSettings() {
+        settings.show(config: config)
+    }
+
+    private func applySettings(_ updated: Config) {
+        config = updated
+        switch updated.assistBackend {
+        case "claude":
+            assist.ollamaModel = nil
+        case "ollama":
+            assist.ollamaModel = updated.ollamaModel
+            OllamaClient.warmUp(model: updated.ollamaModel)
+        default:
+            if OllamaClient.isReachable() {
+                assist.ollamaModel = updated.ollamaModel
+                OllamaClient.warmUp(model: updated.ollamaModel)
+            } else {
+                assist.ollamaModel = nil
+            }
+        }
+        fputs("smriti settings: assist backend=\(updated.assistBackend) model=\(updated.ollamaModel)\n", stderr)
     }
 
     @objc private func openMeetings() {

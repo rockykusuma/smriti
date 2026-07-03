@@ -32,6 +32,24 @@ final class OllamaClient: NSObject, URLSessionDataDelegate {
         return ok
     }
 
+    /// Names of locally installed models, or [] when Ollama is down.
+    static func listModels() -> [String] {
+        var request = URLRequest(url: URL(string: "http://localhost:11434/api/tags")!)
+        request.timeoutInterval = 1.5
+        var names: [String] = []
+        let semaphore = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            if let data,
+               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let models = obj["models"] as? [[String: Any]] {
+                names = models.compactMap { $0["name"] as? String }
+            }
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 2)
+        return names
+    }
+
     /// Ask Ollama to load the model into memory and keep it there, so the
     /// first real request doesn't pay the multi-second load cost.
     static func warmUp(model: String) {
