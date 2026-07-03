@@ -73,7 +73,7 @@ public final class AssistListener {
     // MARK: - Modifier polling
 
     private func poll() {
-        guard isEnabled, !generating else { return }
+        guard isEnabled else { return }
 
         let flags = CGEventSource.flagsState(.combinedSessionState)
         let raw = flags.rawValue
@@ -99,7 +99,14 @@ public final class AssistListener {
         lastTapTime = now
 
         if detector.optionDown(at: now) {
+            if generating {
+                // Heard you, but a draft is already in flight.
+                fputs("smriti assist: busy — still drafting previous reply\n", stderr)
+                NSSound(named: "Basso")?.play()
+                return
+            }
             fputs("smriti assist: triggered\n", stderr)
+            NSSound(named: "Pop")?.play() // audible: gesture recognized
             trigger()
         }
     }
@@ -155,6 +162,7 @@ public final class AssistListener {
                 }
                 DispatchQueue.main.async {
                     self.insert(reply, into: focused)
+                    NSSound(named: "Glass")?.play() // audible: reply delivered
                     fputs("smriti assist: reply typed (\(reply.count) chars)\n", stderr)
                 }
             } catch {

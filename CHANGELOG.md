@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.1 — 2026-07-04
+
+- Reply assist feedback: "Pop" sound when the double-tap registers, floating
+  "drafting…" HUD panel while Claude works, "Glass" chime when the reply is
+  typed, and a "Basso" thunk when you double-tap while a draft is already in
+  flight. Logs drafting duration.
+
 ## v0.2.0 — 2026-07-04
 
 - **Reply assist**: double-tap the right Option key in any text field and
