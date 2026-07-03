@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.6.0 — 2026-07-04
+
+- **Meeting recording with explicit consent**: when any app opens the
+  microphone (Teams, Meet, Zoom, FaceTime, WhatsApp, Slack…), Smriti asks
+  with a 10-second consent panel — no response means NO recording, and it
+  won't ask again until that call ends. On yes: system audio (them) and
+  microphone (you) are recorded as separate local tracks, transcribed
+  on-device with Apple's speech engine, auto-summarized (decisions, action
+  items) via claude, and stored in memory — searchable, Claude-visible,
+  chronicled.
+- **Meetings browser**: menu bar → "Meetings…" opens a window listing all
+  recorded meetings with their summaries and full transcripts.
+- `smriti meetings` CLI; embedded Info.plist for microphone/speech TCC
+  prompts; audio kept under Application Support/Smriti/meetings/.
+- Reminder: participant consent for recording calls is the user's
+  responsibility under local law and employer policy.
+
 ## v0.5.0 — 2026-07-04
 
 - **Action modes**: the double-tap is now context-sensitive — text selected
