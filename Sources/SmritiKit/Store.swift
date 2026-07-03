@@ -252,6 +252,19 @@ public final class Store {
         return readSnapshots(stmt)
     }
 
+    /// Stored meeting transcripts (they live as snapshots under the
+    /// sh.smriti.meeting bundle id), newest first.
+    public func listMeetings(limit: Int = 30) throws -> [Snapshot] {
+        let stmt = try prepare("""
+            SELECT id, app, bundle_id, window_title, content, url, captured_at, last_seen_at
+            FROM snapshots WHERE bundle_id = 'sh.smriti.meeting'
+            ORDER BY last_seen_at DESC LIMIT ?;
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        return readSnapshots(stmt)
+    }
+
     /// Snapshot count for one local day (YYYY-MM-DD) — cheap, for UI.
     public func countForDay(_ day: String) throws -> Int {
         let stmt = try prepare(

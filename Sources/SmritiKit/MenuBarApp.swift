@@ -10,6 +10,8 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var config: Config
     private let daemon: CaptureDaemon
     private let assist = AssistListener()
+    private var meetings: MeetingWatcher!
+    private lazy var meetingsBrowser = MeetingsBrowser(store: store)
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
@@ -62,6 +64,11 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         assist.start()
 
+        meetings = MeetingWatcher(store: store)
+        meetings.contextHint = { [weak self] in self?.daemon.lastWindowCapture?.capture }
+        meetings.start()
+        Transcriber.requestAuthorization()
+
         print("smriti: menubar started (capture interval \(config.captureIntervalSeconds)s, reply assist: double-tap right ⌥)")
     }
 
@@ -107,7 +114,20 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(exclude)
         }
 
+        if meetings.isRecording {
+            let stop = NSMenuItem(
+                title: "● Recording meeting — Stop",
+                action: #selector(stopMeeting), keyEquivalent: "")
+            stop.target = self
+            menu.addItem(stop)
+        }
+
         menu.addItem(.separator())
+
+        let browse = NSMenuItem(
+            title: "Meetings…", action: #selector(openMeetings), keyEquivalent: "m")
+        browse.target = self
+        menu.addItem(browse)
 
         let tone = NSMenuItem(
             title: ToneProfile.load() == nil
@@ -157,6 +177,14 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // process would also work, but patching the exclusion live is nicer.
         daemon.addExclusion(bundleId: last.bundleId)
         notify(title: "Smriti", body: "\(last.name) will never be captured.")
+    }
+
+    @objc private func openMeetings() {
+        meetingsBrowser.show()
+    }
+
+    @objc private func stopMeeting() {
+        meetings.stopRecording()
     }
 
     @objc private func learnTone() {

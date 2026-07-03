@@ -177,11 +177,19 @@ Smriti sees what you see. That is the point, and the risk. Mitigations:
   your subscription — the only data that ever leaves the machine, and only
   when you (or your scheduler) invoke it.
 
-## Meeting capture (roadmap)
+## Meeting recording (consent-first)
 
-Ingesting Teams/meeting transcripts may require participant consent in your
-jurisdiction and under your employer's policy. Smriti will prefer official
-exported transcripts over any form of silent audio capture.
+When any app opens the microphone — Teams, Meet, Zoom, FaceTime, WhatsApp —
+Smriti shows a consent panel for 10 seconds: click **Record** or nothing
+happens. Approved calls are recorded locally (your mic and the system audio
+as separate tracks), transcribed **on-device** with Apple's speech engine,
+auto-summarized (decisions, action items) via `claude -p`, and stored in
+memory — searchable, visible to Claude, part of the daily chronicle. Browse
+everything under menu bar → **Meetings…**; audio lives in
+`~/Library/Application Support/Smriti/meetings/` and never leaves the Mac.
+
+Recording calls may require participant consent in your jurisdiction and
+under your employer's policy — Smriti asks *you*, the rest is on you.
 
 ## Development
 

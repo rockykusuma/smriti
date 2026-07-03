@@ -21,7 +21,17 @@ let package = Package(
         .executableTarget(
             name: "smriti",
             dependencies: ["SmritiKit"],
-            path: "Sources/SmritiCLI"
+            path: "Sources/SmritiCLI",
+            linkerSettings: [
+                // Embed Info.plist so TCC (microphone, speech recognition)
+                // has usage descriptions for this unbundled binary.
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Supporting/Info.plist",
+                ]),
+            ]
         ),
         .testTarget(
             name: "SmritiKitTests",

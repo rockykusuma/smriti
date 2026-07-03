@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.smriti.cli</string>
+    <key>CFBundleName</key>
+    <string>Smriti</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Smriti records meetings only after you explicitly approve each one; audio stays on this Mac.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Smriti transcribes approved meeting recordings on-device; nothing is uploaded.</string>
+</dict>
+</plist>

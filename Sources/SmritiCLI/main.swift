@@ -35,6 +35,7 @@ func printUsage() {
       smriti chronicles          List stored chronicles
       smriti learn-tone          Distill your writing style from captured chats (via claude)
       smriti tone                Show the stored tone profile
+      smriti meetings            List recorded meeting transcripts
       smriti retention <days>    Keep raw snapshots N days (0 = forever); chronicles always kept
       smriti prune               Prune old snapshots now (normally automatic)
       smriti menubar             Menu bar app: capture + pause/resume/exclude from the bar
@@ -190,6 +191,13 @@ do {
             print(profile)
         } else {
             print("No tone profile yet. Run: smriti learn-tone")
+        }
+
+    case "meetings":
+        let rows = try store.listMeetings()
+        if rows.isEmpty { print("No recorded meetings yet. The menu bar app asks before recording any call.") }
+        for row in rows {
+            print("#\(row.id) \(row.windowTitle)")
         }
 
     case "mcp":
