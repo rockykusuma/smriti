@@ -12,6 +12,18 @@ public final class CaptureDaemon {
     /// Most recent app that produced a snapshot (for UI like "Exclude X").
     private(set) var lastCapturedApp: (name: String, bundleId: String)?
 
+    /// Latest raw window capture, kept in RAM only (never persisted for
+    /// excluded apps) so the reply assist can reuse it instead of re-walking
+    /// the AX tree. Guarded by `captureLock` (written on the timer thread,
+    /// read from the assist's background queue).
+    private let captureLock = NSLock()
+    private var _lastWindowCapture: (capture: AXReader.WindowCapture, at: Date)?
+    var lastWindowCapture: (capture: AXReader.WindowCapture, at: Date)? {
+        captureLock.lock()
+        defer { captureLock.unlock() }
+        return _lastWindowCapture
+    }
+
     /// Exclusions added at runtime (config is a value copy taken at launch).
     private var extraExclusions: Set<String> = []
 
@@ -79,6 +91,9 @@ public final class CaptureDaemon {
     private func tick() {
         guard !paused else { return }
         guard let capture = AXReader.captureFrontmost() else { return }
+        captureLock.lock()
+        _lastWindowCapture = (capture, Date())
+        captureLock.unlock()
 
         // Exclusion rules.
         if config.excludedBundleIds.contains(capture.bundleId)
