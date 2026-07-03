@@ -47,9 +47,20 @@ sudo install -m 755 .build/release/smriti /usr/local/bin/smriti
 ```
 
 > **Updating?** Always use `install` (not `cp`) — overwriting the binary in
-> place makes macOS kill it with a stale code-signing cache. And because the
-> binary is ad-hoc signed, each update needs the Accessibility grant redone
-> (remove + re-add in System Settings).
+> place makes macOS kill it with a stale code-signing cache.
+>
+> **Recommended: sign with a stable identity.** Ad-hoc-signed binaries lose
+> their Accessibility / Input Monitoring grants on every rebuild. Create a
+> self-signed code-signing certificate once (Keychain Access → Certificate
+> Assistant → Create a Certificate → type "Code Signing", e.g. named
+> "Smriti Dev Signing"), then sign each build before installing:
+>
+> ```bash
+> codesign --force --sign "Smriti Dev Signing" \
+>   --identifier com.smriti.cli --timestamp=none .build/release/smriti
+> ```
+>
+> With a stable identity + identifier, permission grants survive updates.
 
 ### First run
 
@@ -82,11 +93,23 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
 Restart Claude Desktop. Claude now has five tools: `search_memory`,
 `get_recent_activity`, `get_snapshot`, `get_chronicle`, `list_chronicles`.
 
+## Reply assist
+
+Focused in a message box — Teams, Slack, a LinkedIn comment, any text field —
+**double-tap the right ⌥ key**. Smriti reads the visible conversation through
+the Accessibility tree, has Claude (Haiku) draft the reply, and types it at
+your cursor. You review and hit send. If you'd already typed half a sentence,
+it completes it instead of replacing it. Toggle the feature from the menu
+bar; it beeps when there's nothing sensible to reply to.
+
+Requires the menu bar app (`smriti menubar`) and, one time, the Input
+Monitoring permission alongside Accessibility.
+
 ## Usage
 
 ```bash
 smriti capture              # capture daemon in the foreground (Ctrl-C stops)
-smriti menubar              # ...or as a menu bar app
+smriti menubar              # ...or as a menu bar app (includes reply assist)
 smriti recent 60            # what was on screen in the last hour
 smriti search hearing aid   # full-text search
 smriti stats                # snapshot counts and date range
@@ -156,7 +179,7 @@ exported transcripts over any form of silent audio capture.
 ## Development
 
 ```bash
-swift test    # 18 tests: Store/FTS/dedup/prune, domain matching, MCP tools
+swift test    # 22 tests: Store/FTS/dedup/prune, domain matching, MCP tools
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). PRs that add network calls or

@@ -6,19 +6,10 @@ import Foundation
 public enum Chronicler {
 
     enum ChroniclerError: Error, CustomStringConvertible {
-        case claudeNotFound
-        case claudeFailed(status: Int32, stderr: String)
         case emptySummary
 
         var description: String {
-            switch self {
-            case .claudeNotFound:
-                return "claude CLI not found. Install Claude Code (https://claude.com/claude-code) or add it to PATH."
-            case .claudeFailed(let status, let stderr):
-                return "claude -p exited with status \(status): \(stderr.prefix(500))"
-            case .emptySummary:
-                return "claude returned an empty summary"
-            }
+            "no snapshots for that day (was the capture daemon running?)"
         }
     }
 
@@ -30,7 +21,7 @@ public enum Chronicler {
             throw ChroniclerError.emptySummary
         }
         let digest = buildDigest(snapshots)
-        let summary = try runClaude(prompt: prompt(day: day), stdin: digest)
+        let summary = try ClaudeCLI.run(prompt: prompt(day: day), stdin: digest)
         let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ChroniclerError.emptySummary }
         try store.upsertChronicle(day: day, summary: trimmed, snapshotCount: snapshots.count)
@@ -96,46 +87,4 @@ public enum Chronicler {
         """
     }
 
-    // MARK: - claude CLI
-
-    private static func claudePath() -> String? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
-            "\(home)/.local/bin/claude",
-            "/usr/local/bin/claude",
-            "/opt/homebrew/bin/claude",
-            "\(home)/.claude/local/claude",
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-
-    private static func runClaude(prompt: String, stdin: String) throws -> String {
-        guard let path = claudePath() else { throw ChroniclerError.claudeNotFound }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = ["-p", prompt]
-        // Run outside any project directory so no CLAUDE.md leaks in.
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
-
-        let stdinPipe = Pipe(), stdoutPipe = Pipe(), stderrPipe = Pipe()
-        process.standardInput = stdinPipe
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        try process.run()
-        stdinPipe.fileHandleForWriting.write(Data(stdin.utf8))
-        stdinPipe.fileHandleForWriting.closeFile()
-
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw ChroniclerError.claudeFailed(
-                status: process.terminationStatus,
-                stderr: String(data: errData, encoding: .utf8) ?? "")
-        }
-        return String(data: outData, encoding: .utf8) ?? ""
-    }
 }

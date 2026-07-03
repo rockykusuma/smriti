@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.0 — 2026-07-04
+
+- **Reply assist**: double-tap the right Option key in any text field and
+  Smriti reads the on-screen conversation via Accessibility, drafts a reply
+  with Claude Haiku (`claude -p --model haiku`), and types it at the cursor.
+  Detects the key through modifier-state polling (reliable for launchd
+  agents where event taps and NSEvent monitors are not delivered); typing
+  between taps cancels the gesture; beeps when focus isn't an editable field
+  or there's nothing to reply to.
+- Menu bar: reply-assist toggle; icon switches to a speech bubble while
+  drafting.
+- Deterministic ordering for `recent`/`search` results within the same
+  second.
+- Build docs: sign with a stable self-signed certificate so Accessibility /
+  Input Monitoring grants survive binary updates.
+
 ## v0.1.0 — 2026-07-04
 
 Initial public release.

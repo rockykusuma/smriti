@@ -23,8 +23,9 @@ public enum AXReader {
     }
 
     /// Capture the frontmost app's focused window. Returns nil when there is
-    /// nothing meaningful to capture.
-    static func captureFrontmost() -> WindowCapture? {
+    /// nothing meaningful to capture. The tree walk stops after `timeBudget`
+    /// seconds — huge Electron trees can otherwise take minutes of AX IPC.
+    static func captureFrontmost(timeBudget: TimeInterval = 2.0) -> WindowCapture? {
         guard let app = NSWorkspace.shared.frontmostApplication,
               let bundleId = app.bundleIdentifier else { return nil }
 
@@ -40,7 +41,8 @@ public enum AXReader {
 
         var lines: [String] = []
         var budget = 50_000 // character budget while walking the tree
-        collectText(windowElement, depth: 0, into: &lines, budget: &budget)
+        let deadline = Date().addingTimeInterval(timeBudget)
+        collectText(windowElement, depth: 0, into: &lines, budget: &budget, deadline: deadline)
 
         let content = lines.joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -66,9 +68,10 @@ public enum AXReader {
         _ element: AXUIElement,
         depth: Int,
         into lines: inout [String],
-        budget: inout Int
+        budget: inout Int,
+        deadline: Date
     ) {
-        guard depth < 40, budget > 0 else { return }
+        guard depth < 40, budget > 0, Date() < deadline else { return }
 
         let role = (copyAttribute(element, kAXRoleAttribute) as? String) ?? ""
 
@@ -85,8 +88,8 @@ public enum AXReader {
         guard let children = copyAttribute(element, kAXChildrenAttribute) as? [AXUIElement]
         else { return }
         for child in children {
-            guard budget > 0 else { return }
-            collectText(child, depth: depth + 1, into: &lines, budget: &budget)
+            guard budget > 0, Date() < deadline else { return }
+            collectText(child, depth: depth + 1, into: &lines, budget: &budget, deadline: deadline)
         }
     }
 
