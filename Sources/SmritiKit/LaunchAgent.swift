@@ -30,7 +30,7 @@ public enum LaunchAgent {
             // `smriti install-agent` or logs in again.
             "StandardOutPath": logPath,
             "StandardErrorPath": logPath,
-            "ProcessType": "Background",
+            "ProcessType": "Interactive", // Background gets CPU-throttled, slowing claude subprocesses
         ]
         let data = try PropertyListSerialization.data(
             fromPropertyList: plist, format: .xml, options: 0)

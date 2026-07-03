@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.0 — 2026-07-04
+
+- **Warm Claude pool**: reply assist now keeps a pre-warmed `claude`
+  process (stream-json mode) with the slow first turn burned on a dummy
+  exchange; each request gets a clean, already-hot session and a fresh
+  replacement warms in the background. Cold-run fallback retained.
+- LaunchAgent runs as ProcessType=Interactive and claude subprocesses get
+  user-initiated QoS — background throttling was multiplying latency.
+- Real-world drafting: ~86s worst case → ~6–9s.
+
 ## v0.2.1 — 2026-07-04
 
 - Reply assist feedback: "Pop" sound when the double-tap registers, floating

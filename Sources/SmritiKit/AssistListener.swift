@@ -42,6 +42,7 @@ public final class AssistListener {
     public var onGeneratingChange: ((Bool) -> Void)?
 
     private var pollTimer: Timer?
+    private let warmClaude = WarmClaude()
     private var detector = DoubleTapDetector()
     private var generating = false
     private var rightOptionWasDown = false
@@ -149,11 +150,21 @@ public final class AssistListener {
             //    they can add many seconds of startup.
             let started = Date()
             do {
-                let reply = try ClaudeCLI.run(
-                    prompt: AssistListener.prompt(capture: capture, draft: draft),
-                    stdin: String(capture.content.suffix(12_000)),
-                    extraArgs: ["--model", "haiku", "--strict-mcp-config"]
-                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                let fullPrompt = AssistListener.prompt(capture: capture, draft: draft)
+                    + "\n(Disregard any earlier warmup exchange in this session.)"
+                    + "\n\n--- WINDOW TEXT ---\n"
+                    + String(capture.content.suffix(12_000))
+                let raw: String
+                if let warm = self.warmClaude.request(fullPrompt) {
+                    raw = warm
+                } else {
+                    fputs("smriti assist: warm claude unavailable, cold run\n", stderr)
+                    raw = try ClaudeCLI.run(
+                        prompt: AssistListener.prompt(capture: capture, draft: draft),
+                        stdin: String(capture.content.suffix(12_000)),
+                        extraArgs: ["--model", "haiku", "--strict-mcp-config"])
+                }
+                let reply = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 fputs("smriti assist: drafted in \(String(format: "%.1f", Date().timeIntervalSince(started)))s\n", stderr)
                 guard !reply.isEmpty, !reply.contains("NO_REPLY_CONTEXT") else {
                     fputs("smriti assist: nothing to reply to here\n", stderr)
@@ -177,8 +188,8 @@ public final class AssistListener {
         You are drafting a reply on behalf of the user, who has their cursor \
         in a text input in \(capture.appName) (window: "\(capture.windowTitle)"\
         \(capture.url.isEmpty ? "" : ", page: \(capture.url)")). \
-        Piped in below is the visible text of that window — a chat thread, \
-        comment section, or similar. Identify what the user is replying to \
+        Below (after --- WINDOW TEXT ---) is the visible text of that \
+        window — a chat thread, comment section, or similar. Identify what the user is replying to \
         (the most recent message addressed to them, or the post nearest \
         their input) and write the reply they would plausibly send.
 
