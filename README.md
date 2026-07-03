@@ -96,11 +96,16 @@ Restart Claude Desktop. Claude now has five tools: `search_memory`,
 ## Reply assist
 
 Focused in a message box — Teams, Slack, a LinkedIn comment, any text field —
-**double-tap the right ⌥ key**. Smriti reads the visible conversation through
-the Accessibility tree, has Claude (Haiku) draft the reply, and types it at
-your cursor. You review and hit send. If you'd already typed half a sentence,
-it completes it instead of replacing it. Toggle the feature from the menu
-bar; it beeps when there's nothing sensible to reply to.
+**double-tap the right ⌥ key**. Smriti reads the conversation (from its own
+seconds-old capture, no extra walk), pulls related older context from your
+memory, and streams a draft into the field as Claude generates it. The
+action is context-sensitive: an **empty field gets a reply**, an unfinished
+**draft gets continued**, and **selected text gets rewritten** in place.
+
+Run `smriti learn-tone` once (or use the menu item) and drafts follow your
+personal writing style, distilled from your own captured messages into an
+editable `tone.md`. Toggle the assist from the menu bar; it beeps when
+there's nothing sensible to reply to.
 
 Requires the menu bar app (`smriti menubar`) and, one time, the Input
 Monitoring permission alongside Accessibility.
@@ -120,6 +125,8 @@ smriti exclusions                          # list all exclusions
 
 smriti chronicle yesterday  # summarize a day via `claude -p` (Claude Code CLI)
 smriti chronicles           # list stored daily summaries
+smriti learn-tone           # distill your writing style from captured chats
+smriti tone                 # show/inspect the stored tone profile
 smriti retention 90         # prune raw snapshots after 90 days (chronicles kept)
 
 smriti install-agent [menubar]  # start at login; uninstall-agent removes it
@@ -179,7 +186,7 @@ exported transcripts over any form of silent audio capture.
 ## Development
 
 ```bash
-swift test    # 22 tests: Store/FTS/dedup/prune, domain matching, MCP tools
+swift test    # 23 tests: Store/FTS/dedup/prune, domain matching, MCP tools
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). PRs that add network calls or

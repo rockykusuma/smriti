@@ -33,6 +33,8 @@ func printUsage() {
       smriti mcp                 Run stdio MCP server (for Claude Desktop/Cowork)
       smriti chronicle [day]     Summarize a day via `claude -p` (default: today; or YYYY-MM-DD / yesterday)
       smriti chronicles          List stored chronicles
+      smriti learn-tone          Distill your writing style from captured chats (via claude)
+      smriti tone                Show the stored tone profile
       smriti retention <days>    Keep raw snapshots N days (0 = forever); chronicles always kept
       smriti prune               Prune old snapshots now (normally automatic)
       smriti menubar             Menu bar app: capture + pause/resume/exclude from the bar
@@ -176,6 +178,19 @@ do {
 
     case "agent-status":
         print(LaunchAgent.status())
+
+    case "learn-tone":
+        print("smriti: learning your writing tone via claude -p …")
+        let profile = try ToneProfile.learn(store: store)
+        print(profile)
+        print("\nSaved to \(ToneProfile.path.path) — edit it anytime.")
+
+    case "tone":
+        if let profile = ToneProfile.load() {
+            print(profile)
+        } else {
+            print("No tone profile yet. Run: smriti learn-tone")
+        }
 
     case "mcp":
         // stdout is the JSON-RPC channel — no prints here, only stderr.

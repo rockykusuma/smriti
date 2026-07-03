@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.5.0 — 2026-07-04
+
+- **Action modes**: the double-tap is now context-sensitive — text selected
+  → rewrite it in place; unfinished draft → continue it; empty field →
+  reply to the conversation.
+- **Writes in your tone**: `smriti learn-tone` (or the menu item) distills
+  a style guide from two weeks of captured communication windows into
+  `tone.md`; every draft follows it. Inspect/edit with `smriti tone`.
+- **Memory-informed replies**: the assist runs an FTS query over your
+  capture history (window-title terms, older than an hour) and feeds the
+  top matches to Claude alongside the on-screen context.
+
 ## v0.4.0 — 2026-07-04
 
 - **Streaming replies**: reply assist types the draft progressively as
