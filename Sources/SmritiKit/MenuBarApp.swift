@@ -47,6 +47,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 systemSymbolName: generating ? "ellipsis.bubble" : "brain",
                 accessibilityDescription: "Smriti")
             self?.statusItem.button?.image?.isTemplate = true
+            self?.setHUDVisible(generating)
         }
         assist.start()
 
@@ -163,6 +164,50 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    // MARK: - Drafting HUD
+
+    /// Small floating "drafting…" indicator so it's obvious work is
+    /// happening in the background after a double-tap.
+    private lazy var hud: NSPanel = {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 230, height: 40),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: true)
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        let effect = NSVisualEffectView(frame: panel.contentRect(forFrameRect: panel.frame))
+        effect.material = .hudWindow
+        effect.state = .active
+        effect.wantsLayer = true
+        effect.layer?.cornerRadius = 10
+        effect.layer?.masksToBounds = true
+
+        let label = NSTextField(labelWithString: "🧠  Smriti is drafting a reply…")
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.frame = NSRect(x: 14, y: 11, width: 210, height: 18)
+        effect.addSubview(label)
+        panel.contentView = effect
+        return panel
+    }()
+
+    private func setHUDVisible(_ visible: Bool) {
+        if visible {
+            if let screen = NSScreen.main {
+                let frame = screen.visibleFrame
+                hud.setFrameOrigin(NSPoint(
+                    x: frame.maxX - hud.frame.width - 16,
+                    y: frame.maxY - hud.frame.height - 12))
+            }
+            hud.orderFrontRegardless()
+        } else {
+            hud.orderOut(nil)
+        }
     }
 
     /// Lightweight notification via NSUserNotification's modern replacement
