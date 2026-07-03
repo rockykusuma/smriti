@@ -19,6 +19,12 @@ public struct Config: Codable {
     /// Days to keep raw snapshots before the daemon prunes them
     /// (chronicles are kept forever). 0 disables pruning.
     public var retentionDays: Int = 90
+    /// Reply-assist model backend: "auto" (Ollama when running, else
+    /// Claude), "ollama", or "claude". Chronicles/tone/summaries always
+    /// use Claude for quality.
+    public var assistBackend: String = "auto"
+    /// Local model for the assist when Ollama is used.
+    public var ollamaModel: String = "llama3.2:latest"
 
     public var databasePath: String {
         Config.supportDirectory.appendingPathComponent("smriti.sqlite").path
@@ -71,6 +77,8 @@ public struct Config: Codable {
             partial.captureIntervalSeconds.map { config.captureIntervalSeconds = $0 }
             partial.maxContentLength.map { config.maxContentLength = $0 }
             partial.retentionDays.map { config.retentionDays = $0 }
+            partial.assistBackend.map { config.assistBackend = $0 }
+            partial.ollamaModel.map { config.ollamaModel = $0 }
             try config.save() // rewrite with full key set
             return config
         }
@@ -84,6 +92,8 @@ public struct Config: Codable {
         var captureIntervalSeconds: Double?
         var maxContentLength: Int?
         var retentionDays: Int?
+        var assistBackend: String?
+        var ollamaModel: String?
     }
 
     public func save() throws {

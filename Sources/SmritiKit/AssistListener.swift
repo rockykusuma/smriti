@@ -46,6 +46,9 @@ public final class AssistListener {
     /// Separate read-only connection for memory retrieval (never share a
     /// SQLite connection across threads).
     var memoryStore: Store?
+    /// When set, the assist tries this local Ollama model first and falls
+    /// back to the warm Claude process on any failure.
+    var ollamaModel: String?
 
     private var pollTimer: Timer?
     private let warmClaude = WarmClaude()
@@ -211,13 +214,28 @@ public final class AssistListener {
             )
 
             var firstDeltaAt: Date?
-            let raw = self.warmClaude.request(fullPrompt) { fragment in
+            let deltaHandler: (String) -> Void = { fragment in
                 if firstDeltaAt == nil {
                     firstDeltaAt = Date()
                     fputs("smriti assist: first tokens after \(String(format: "%.1f", Date().timeIntervalSince(started)))s\n", stderr)
                 }
                 DispatchQueue.main.async { typist.feed(fragment) }
             }
+
+            var raw: String?
+            var backend = "claude"
+            if let model = self.ollamaModel {
+                backend = "ollama/\(model)"
+                raw = OllamaClient(model: model).request(fullPrompt, onDelta: deltaHandler)
+                if raw == nil {
+                    fputs("smriti assist: ollama failed, falling back to claude\n", stderr)
+                    backend = "claude (fallback)"
+                }
+            }
+            if raw == nil, firstDeltaAt == nil { // don't mix streams mid-typing
+                raw = self.warmClaude.request(fullPrompt, onDelta: deltaHandler)
+            }
+            fputs("smriti assist: backend=\(backend)\n", stderr)
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }

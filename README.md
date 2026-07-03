@@ -36,7 +36,8 @@ in order:
    web domains (with subdomains), and window-title keywords are one command
    to block — *before* content ever reaches the database.
 4. **No LLM inside.** Claude, on the subscription you already pay for, does
-   all the thinking through MCP. Search is SQLite FTS5, not embeddings.
+   the thinking through MCP — or, for instant replies, a local Ollama model
+   so text never leaves the Mac. Search is SQLite FTS5, not embeddings.
 
 ## Install
 
