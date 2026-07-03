@@ -42,6 +42,7 @@ public enum ClaudeCLI {
         process.arguments = extraArgs + ["-p", prompt]
         // Run outside any project directory so no CLAUDE.md leaks in.
         process.currentDirectoryURL = FileManager.default.temporaryDirectory
+        process.qualityOfService = .userInitiated
 
         let stdinPipe = Pipe(), stdoutPipe = Pipe(), stderrPipe = Pipe()
         process.standardInput = stdinPipe
