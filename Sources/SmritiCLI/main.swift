@@ -2,6 +2,10 @@ import Foundation
 import AppKit
 import SmritiKit
 
+// launchd redirects stdout to a log file; line-buffer it so log lines appear
+// immediately instead of on exit.
+setvbuf(stdout, nil, _IOLBF, 0)
+
 // MARK: - Smriti CLI entry point
 //
 // Commands:

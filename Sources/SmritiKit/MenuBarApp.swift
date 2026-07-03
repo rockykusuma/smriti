@@ -9,6 +9,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let store: Store
     private var config: Config
     private let daemon: CaptureDaemon
+    private let assist = AssistListener()
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
@@ -40,7 +41,16 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
 
         daemon.start()
-        print("smriti: menubar started (capture interval \(config.captureIntervalSeconds)s)")
+
+        assist.onGeneratingChange = { [weak self] generating in
+            self?.statusItem.button?.image = NSImage(
+                systemSymbolName: generating ? "ellipsis.bubble" : "brain",
+                accessibilityDescription: "Smriti")
+            self?.statusItem.button?.image?.isTemplate = true
+        }
+        assist.start()
+
+        print("smriti: menubar started (capture interval \(config.captureIntervalSeconds)s, reply assist: double-tap right ⌥)")
     }
 
     // Rebuild the menu each time it opens so counts and state are fresh.
@@ -68,6 +78,13 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             action: #selector(togglePause), keyEquivalent: "p")
         toggle.target = self
         menu.addItem(toggle)
+
+        let assistToggle = NSMenuItem(
+            title: "Reply assist (double-tap right ⌥)",
+            action: #selector(toggleAssist), keyEquivalent: "")
+        assistToggle.state = assist.isEnabled ? .on : .off
+        assistToggle.target = self
+        menu.addItem(assistToggle)
 
         if let last = daemon.lastCapturedApp,
            !config.excludedBundleIds.contains(last.bundleId) {
@@ -103,6 +120,10 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Actions
+
+    @objc private func toggleAssist() {
+        assist.setEnabled(!assist.isEnabled)
+    }
 
     @objc private func togglePause() {
         daemon.setPaused(!daemon.isPaused)
