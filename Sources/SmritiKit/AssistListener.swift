@@ -40,6 +40,10 @@ public final class AssistListener {
     public private(set) var isEnabled = true
     /// Called on the main queue when generation starts/stops (for icon state).
     public var onGeneratingChange: ((Bool) -> Void)?
+    /// Fired on the main queue just as drafting begins, with the caret's
+    /// on-screen rect (AX top-left origin) so the UI can show a "drafting…"
+    /// indicator at the cursor. Rect is nil when it can't be resolved.
+    var draftAnchor: ((CGRect?) -> Void)?
     /// Optional provider of a fresh-enough window capture (the capture
     /// daemon's last snapshot) so triggering doesn't re-walk the AX tree.
     var contextSource: (() -> AXReader.WindowCapture?)? // internal: only MenuBarApp wires it
@@ -54,8 +58,15 @@ public final class AssistListener {
     private let warmClaude = WarmClaude()
     private var detector = DoubleTapDetector()
     private var generating = false
+    /// Set on the main thread when the user hits Escape mid-draft. Read on the
+    /// main thread before typing each fragment, so the typing stops at once and
+    /// no cold-fallback fires. All access is main-thread → no lock needed.
+    private var cancelRequested = false
     private var rightOptionWasDown = false
     private var lastTapTime: TimeInterval = -1
+
+    /// Escape key (used to abort an in-flight draft).
+    private static let escapeKeyCode: CGKeyCode = 53
 
     /// Device-dependent flag bit for the RIGHT Option key
     /// (NX_DEVICERALTKEYMASK). Left ⌥ (0x20) stays free for typing symbols.
@@ -84,6 +95,15 @@ public final class AssistListener {
 
     private func poll() {
         guard isEnabled else { return }
+
+        // While a draft is in flight, Escape aborts it. Polled the same way as
+        // the trigger (session key state) so it works for menu-bar agents where
+        // event taps/global monitors are unreliable.
+        if generating,
+           CGEventSource.keyState(.combinedSessionState, key: AssistListener.escapeKeyCode) {
+            cancelGeneration()
+            return
+        }
 
         let flags = CGEventSource.flagsState(.combinedSessionState)
         let raw = flags.rawValue
@@ -123,9 +143,21 @@ public final class AssistListener {
 
     // MARK: - The assist flow
 
+    /// Abort an in-flight draft: stop typing further fragments, kill the model
+    /// process so it stops generating, and hide the HUD immediately.
+    private func cancelGeneration() {
+        guard generating, !cancelRequested else { return }
+        cancelRequested = true
+        warmClaude.cancelCurrent()
+        fputs("smriti assist: cancelled by user (esc)\n", stderr)
+        NSSound(named: "Funk")?.play()
+        setGenerating(false) // hide HUD/icon now; the worker unwinds behind it
+    }
+
     private func trigger() {
         // Everything here is AX IPC and subprocess work — keep it off the
         // main thread so the menu bar (and the poll timer) stay alive.
+        cancelRequested = false
         setGenerating(true)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -143,6 +175,16 @@ public final class AssistListener {
                 NSSound.beep()
                 return
             }
+
+            // Now that we know where text will land, show the "drafting…"
+            // indicator at the caret (falls back to the mouse if AX can't give
+            // us the caret bounds — common in some web/Electron fields).
+            // Prefer exact caret bounds (native apps); fall back to the field's
+            // own frame (Electron/web apps report this even when caret bounds
+            // are missing); the UI falls back to the mouse if both are nil.
+            let anchorRect = self.caretScreenRect(focused) ?? self.elementFrameRect(focused)
+            DispatchQueue.main.async { self.draftAnchor?(anchorRect) }
+
             let draft = (self.copyAttribute(focused, kAXValueAttribute) as? String) ?? ""
             let selection = (self.copyAttribute(focused, kAXSelectedTextAttribute) as? String) ?? ""
 
@@ -219,7 +261,10 @@ public final class AssistListener {
                     firstDeltaAt = Date()
                     fputs("smriti assist: first tokens after \(String(format: "%.1f", Date().timeIntervalSince(started)))s\n", stderr)
                 }
-                DispatchQueue.main.async { typist.feed(fragment) }
+                DispatchQueue.main.async {
+                    guard !self.cancelRequested else { return }
+                    typist.feed(fragment)
+                }
             }
 
             var raw: String?
@@ -239,6 +284,12 @@ public final class AssistListener {
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                // User aborted mid-flight: discard whatever came back and do
+                // NOT fall through to the cold re-run below.
+                if self.cancelRequested {
+                    fputs("smriti assist: output discarded (cancelled)\n", stderr)
+                    return
+                }
                 if let raw {
                     let outcome = typist.finish(fullText: raw)
                     switch outcome {
@@ -504,6 +555,48 @@ public final class AssistListener {
         AXUIElementIsAttributeSettable(
             element, kAXSelectedTextAttribute as CFString, &settable)
         return settable.boolValue
+    }
+
+    /// On-screen bounds of the current caret / selection for `element`, in AX
+    /// coordinates (top-left origin, y grows downward). Returns nil when the
+    /// element doesn't support parameterized range bounds.
+    private func caretScreenRect(_ element: AXUIElement) -> CGRect? {
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+                element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+              let rangeRef else { return nil }
+        var boundsRef: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+                element, kAXBoundsForRangeParameterizedAttribute as CFString,
+                rangeRef as! AXValue, &boundsRef) == .success,
+              let boundsRef else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(boundsRef as! AXValue, .cgRect, &rect),
+              rect.origin.x.isFinite, rect.origin.y.isFinite,
+              // A real caret has a line height; Electron/web hand back a
+              // zero-size rect (e.g. 0,H,0,0) that must be treated as "unknown".
+              rect.size.width >= 1 || rect.size.height >= 1
+        else { return nil }
+        return rect
+    }
+
+    /// The focused element's own on-screen frame (AX top-left origin), used as
+    /// a fallback anchor when precise caret bounds aren't available.
+    private func elementFrameRect(_ element: AXUIElement) -> CGRect? {
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+                element, kAXPositionAttribute as CFString, &posRef) == .success, let posRef,
+              AXUIElementCopyAttributeValue(
+                element, kAXSizeAttribute as CFString, &sizeRef) == .success, let sizeRef
+        else { return nil }
+        var point = CGPoint.zero
+        var sz = CGSize.zero
+        guard AXValueGetValue(posRef as! AXValue, .cgPoint, &point),
+              AXValueGetValue(sizeRef as! AXValue, .cgSize, &sz),
+              point.x.isFinite, point.y.isFinite, sz.width > 1, sz.height > 1
+        else { return nil }
+        return CGRect(origin: point, size: sz)
     }
 
     private func copyAttribute(_ element: AXUIElement, _ attribute: String) -> AnyObject? {

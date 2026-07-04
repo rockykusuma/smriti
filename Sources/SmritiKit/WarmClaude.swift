@@ -36,6 +36,13 @@ public final class WarmClaude {
         return turn(text, timeout: timeout, onDelta: onDelta)
     }
 
+    /// Terminate the in-flight turn's process so a blocked `turn` read returns
+    /// promptly (EOF → nil). The pending `request` then respawns a fresh warm
+    /// process via its defer, so the next draft is still fast.
+    public func cancelCurrent() {
+        process?.terminate()
+    }
+
     // MARK: - Process management
 
     private func respawn() {
