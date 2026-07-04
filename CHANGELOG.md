@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Main window with a sidebar.** Menu bar → "Open Smriti" (⌘O) opens one
+  window with a sidebar — Home (status, today's count, quick actions), Meetings,
+  Search (full-text over your memory), Chronicles, and Settings. Replaces the
+  separate Meetings and Settings windows; the menu items now jump to those
+  sidebar sections.
+
 - **Meeting transcription, hardened** (from the first real-call test):
   - Mic is now recorded as mono 16 kHz. It was captured in the input device's
     raw format (often multi-channel float), which the on-device recognizer

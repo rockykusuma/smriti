@@ -11,10 +11,18 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let daemon: CaptureDaemon
     private let assist = AssistListener()
     private var meetings: MeetingWatcher!
-    private lazy var meetingsBrowser = MeetingsBrowser(store: store)
-    private lazy var settings = SettingsWindow(config: config) { [weak self] updated in
-        self?.applySettings(updated)
-    }
+    private lazy var mainWindow: MainWindow = {
+        let w = MainWindow(store: store, config: config)
+        w.isPaused = { [weak self] in self?.daemon.isPaused ?? false }
+        w.setPaused = { [weak self] paused in
+            self?.daemon.setPaused(paused)
+            self?.statusItem.button?.appearsDisabled = paused
+        }
+        w.writeChronicleNow = { [weak self] in self?.chronicleToday() }
+        w.learnToneNow = { [weak self] in self?.learnTone() }
+        w.onConfigChange = { [weak self] updated in self?.applySettings(updated) }
+        return w
+    }()
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
@@ -140,6 +148,11 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let openMain = NSMenuItem(
+            title: "Open Smriti", action: #selector(openMainWindow), keyEquivalent: "o")
+        openMain.target = self
+        menu.addItem(openMain)
+
         let browse = NSMenuItem(
             title: "Meetings…", action: #selector(openMeetings), keyEquivalent: "m")
         browse.target = self
@@ -200,8 +213,12 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notify(title: "Smriti", body: "\(last.name) will never be captured.")
     }
 
+    @objc private func openMainWindow() {
+        mainWindow.show(section: 0)
+    }
+
     @objc private func openSettings() {
-        settings.show(config: config)
+        mainWindow.show(section: mainWindow.sectionIndex(titled: "Settings"))
     }
 
     private func applySettings(_ updated: Config) {
@@ -224,7 +241,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openMeetings() {
-        meetingsBrowser.show()
+        mainWindow.show(section: mainWindow.sectionIndex(titled: "Meetings"))
     }
 
     @objc private func stopMeeting() {
