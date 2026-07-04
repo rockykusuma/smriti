@@ -341,10 +341,65 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         draftHUD.setFrameOrigin(origin)
     }
 
-    /// Lightweight notification via NSUserNotification's modern replacement
-    /// isn't available to unbundled binaries, so fall back to stdout + beep.
+    // MARK: - Toast (visible feedback for background actions)
+
+    private let toastLabel = NSTextField(labelWithString: "")
+    private var toastDismiss: DispatchWorkItem?
+
+    private lazy var toastPanel: NSPanel = {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 34),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: true)
+        panel.level = .statusBar
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        let effect = NSVisualEffectView(frame: panel.contentRect(forFrameRect: panel.frame))
+        effect.material = .hudWindow
+        effect.state = .active
+        effect.wantsLayer = true
+        effect.layer?.cornerRadius = 9
+        effect.layer?.masksToBounds = true
+
+        toastLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        toastLabel.textColor = .labelColor
+        toastLabel.lineBreakMode = .byTruncatingTail
+        effect.addSubview(toastLabel)
+        panel.contentView = effect
+        return panel
+    }()
+
+    /// Show a short-lived toast just below the menu bar. Safe from any thread.
+    private func toast(_ message: String) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.toast(message) }
+            return
+        }
+        toastLabel.stringValue = message
+        toastLabel.sizeToFit()
+        let width = min(max(toastLabel.frame.width + 28, 140), 520)
+        let height: CGFloat = 34
+        toastPanel.setContentSize(NSSize(width: width, height: height))
+        toastLabel.frame = NSRect(x: 14, y: 8, width: width - 28, height: 18)
+        if let vf = NSScreen.main?.visibleFrame {
+            toastPanel.setFrameOrigin(NSPoint(x: vf.midX - width / 2, y: vf.maxY - height - 8))
+        }
+        toastPanel.orderFrontRegardless()
+
+        toastDismiss?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.toastPanel.orderOut(nil) }
+        toastDismiss = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+    }
+
+    /// Background actions report progress here. Shows a toast (real
+    /// notifications aren't available to this unbundled binary) and logs.
     private func notify(title: String, body: String) {
         print("smriti: \(body)")
-        DispatchQueue.main.async { NSSound.beep() }
+        toast(body)
     }
 }
