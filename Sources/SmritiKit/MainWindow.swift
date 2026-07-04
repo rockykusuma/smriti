@@ -88,11 +88,25 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         sidebar.dataSource = self
         sidebar.delegate = self
         sidebar.backgroundColor = Theme.sidebar
-        let sideScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 620))
+        sidebar.intercellSpacing = NSSize(width: 0, height: 3)
+        let sideScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 620 - 64))
         sideScroll.documentView = sidebar
         sideScroll.hasVerticalScroller = true
         sideScroll.drawsBackground = false
         sideScroll.autoresizingMask = [.height]
+
+        // Sidebar header: app mark + wordmark.
+        let header = NSView(frame: NSRect(x: 0, y: 620 - 64, width: 200, height: 64))
+        header.autoresizingMask = [.minYMargin]
+        let mark = NSImageView(frame: NSRect(x: 16, y: 20, width: 22, height: 22))
+        mark.image = NSApp.applicationIconImage
+        mark.imageScaling = .scaleProportionallyUpOrDown
+        let wordmark = NSTextField(labelWithString: "Smriti")
+        wordmark.font = Theme.serif(17, .semibold)
+        wordmark.textColor = Theme.ink
+        wordmark.frame = NSRect(x: 46, y: 21, width: 120, height: 22)
+        header.addSubview(mark)
+        header.addSubview(wordmark)
 
         // Content
         contentContainer.frame = NSRect(x: 201, y: 0, width: 739, height: 620)
@@ -107,6 +121,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         divider.autoresizingMask = [.height]
 
         root.addSubview(sideScroll)
+        root.addSubview(header)
         root.addSubview(divider)
         root.addSubview(contentContainer)
         win.contentView = root
@@ -131,30 +146,48 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let section = sections[row]
-        let cell = NSTableCellView()
+        // Plain NSView (not NSTableCellView) so the system doesn't recolor our
+        // label on selection — we control colors via a custom row view.
+        let cell = NSView()
         let image = NSImageView()
         image.image = NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.title)
+        image.contentTintColor = Theme.inkSecondary
         image.translatesAutoresizingMaskIntoConstraints = false
         let label = NSTextField(labelWithString: section.title)
-        label.font = .systemFont(ofSize: 13)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = Theme.ink
         label.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(image)
         cell.addSubview(label)
-        cell.textField = label
         NSLayoutConstraint.activate([
-            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
             image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            image.widthAnchor.constraint(equalToConstant: 18),
-            label.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 8),
+            image.widthAnchor.constraint(equalToConstant: 17),
+            label.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 9),
             label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
     }
 
+    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        SidebarRowView()
+    }
+
     public func tableViewSelectionDidChange(_ notification: Notification) {
         guard sidebar.selectedRow >= 0 else { return }
         selectSection(sidebar.selectedRow)
+    }
+}
+
+/// Sidebar rows with a soft, neutral rounded selection (not the system blue).
+final class SidebarRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        let r = bounds.insetBy(dx: 8, dy: 1)
+        let path = NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7)
+        Theme.selection.setFill()
+        path.fill()
     }
 }
 
@@ -205,9 +238,12 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         table.rowHeight = 40
         table.dataSource = self
         table.delegate = self
+        table.backgroundColor = .clear
+        table.style = .inset
         let listScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 260, height: 620))
         listScroll.documentView = table
         listScroll.hasVerticalScroller = true
+        listScroll.drawsBackground = false
         listScroll.autoresizingMask = [.height]
 
         let textScroll = MasterDetailSection.makeTextScroll(text,
@@ -240,6 +276,9 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         text.isEditable = false
         text.isRichText = true
         text.font = .systemFont(ofSize: 13)
+        text.drawsBackground = false
+        text.textColor = Theme.ink
+        scroll.drawsBackground = false
         text.textContainerInset = NSSize(width: 24, height: 22)
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
