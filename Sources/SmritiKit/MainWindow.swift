@@ -229,9 +229,9 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         scroll.borderType = .noBorder
         text.frame = NSRect(x: 0, y: 0, width: frame.width, height: frame.height)
         text.isEditable = false
-        text.isRichText = false
+        text.isRichText = true
         text.font = .systemFont(ofSize: 13)
-        text.textContainerInset = NSSize(width: 16, height: 16)
+        text.textContainerInset = NSSize(width: 24, height: 22)
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
         text.autoresizingMask = [.width]
@@ -262,7 +262,10 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard table.selectedRow >= 0, table.selectedRow < rows.count else { return }
         let row = rows[table.selectedRow]
-        text.string = "\(row.title)\n\(String(repeating: "─", count: 42))\n\n\(row.body)"
+        let doc = NSMutableAttributedString()
+        doc.append(MarkdownRenderer.caption(row.title))
+        doc.append(MarkdownRenderer.attributed(row.body))
+        text.textStorage?.setAttributedString(doc)
         text.scrollToBeginningOfDocument(nil)
     }
 }
