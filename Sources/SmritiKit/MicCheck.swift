@@ -9,6 +9,7 @@ public final class MicCheck {
     private var peak: Float = 0
     private var sumSquares: Double = 0
     private var sampleCount: Int = 0
+    private var intervalPeak: Float = 0
     private let lock = NSLock()
 
     public init() {}
@@ -50,8 +51,19 @@ public final class MicCheck {
             return false
         }
 
-        fputs("  recording \(Int(seconds))s… speak now.\n", stderr)
-        Thread.sleep(forTimeInterval: seconds)
+        print("  recording \(Int(seconds))s… speak now.")
+        // Print a level reading every 0.5s so you can see your voice register.
+        let step = 0.5
+        var elapsed = 0.0
+        while elapsed < seconds {
+            Thread.sleep(forTimeInterval: step)
+            elapsed += step
+            lock.lock()
+            let ip = intervalPeak
+            intervalPeak = 0
+            lock.unlock()
+            print(String(format: "    %4.1fs  %@  %@", elapsed, meterBar(Double(ip)), dbfs(Double(ip))))
+        }
 
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -106,9 +118,18 @@ public final class MicCheck {
         }
         lock.lock()
         peak = max(peak, localPeak)
+        intervalPeak = max(intervalPeak, localPeak)
         sumSquares += localSq
         sampleCount += localCount
         lock.unlock()
+    }
+
+    /// A 20-wide bar from a linear level, scaled over -60..0 dBFS.
+    private func meterBar(_ linear: Double) -> String {
+        let db = linear > 0 ? 20 * log10(linear) : -100
+        let filled = max(0, min(20, Int((db + 60) / 60 * 20)))
+        return "[" + String(repeating: "█", count: filled)
+            + String(repeating: "·", count: 20 - filled) + "]"
     }
 
     private func dbfs(_ linear: Double) -> String {
