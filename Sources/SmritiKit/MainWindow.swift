@@ -72,8 +72,13 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         win.isReleasedWhenClosed = false
         win.minSize = NSSize(width: 720, height: 460)
         win.center()
+        // Warm, editorial light appearance across the app.
+        Theme.style(window: win, background: Theme.sidebar)
+        win.titlebarAppearsTransparent = true
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 620))
+        root.wantsLayer = true
+        root.layer?.backgroundColor = Theme.sidebar.cgColor
 
         // Sidebar
         sidebar.style = .sourceList
@@ -82,8 +87,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         sidebar.addTableColumn(NSTableColumn(identifier: .init("section")))
         sidebar.dataSource = self
         sidebar.delegate = self
-        // .style = .sourceList already provides the source-list selection look;
-        // the old selectionHighlightStyle = .sourceList is deprecated.
+        sidebar.backgroundColor = Theme.sidebar
         let sideScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 620))
         sideScroll.documentView = sidebar
         sideScroll.hasVerticalScroller = true
@@ -93,9 +97,13 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         // Content
         contentContainer.frame = NSRect(x: 201, y: 0, width: 739, height: 620)
         contentContainer.autoresizingMask = [.width, .height]
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.backgroundColor = Theme.surface.cgColor
 
         let divider = NSBox(frame: NSRect(x: 200, y: 0, width: 1, height: 620))
-        divider.boxType = .separator
+        divider.boxType = .custom
+        divider.borderWidth = 0
+        divider.fillColor = Theme.border
         divider.autoresizingMask = [.height]
 
         root.addSubview(sideScroll)
