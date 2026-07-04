@@ -71,8 +71,10 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 systemSymbolName: generating ? "ellipsis.bubble" : "brain",
                 accessibilityDescription: "Smriti")
             self?.statusItem.button?.image?.isTemplate = true
-            self?.setHUDVisible(generating)
+            if !generating { self?.hideDraftHUD() }
         }
+        // Show the caret-anchored "drafting…" pill once the target field is known.
+        assist.draftAnchor = { [weak self] caret in self?.showDraftHUD(anchor: caret) }
         switch config.assistBackend {
         case "claude":
             break
@@ -246,18 +248,23 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Drafting HUD
+    // MARK: - Drafting indicator (a small pill at the text caret)
 
-    /// Small floating "drafting…" indicator so it's obvious work is
-    /// happening in the background after a double-tap.
-    private lazy var hud: NSPanel = {
+    private let draftLabel = NSTextField(labelWithString: "")
+    private var draftDotsTimer: Timer?
+    private var draftDotPhase = 0
+
+    /// A compact "Smriti drafting…" pill shown right where text will appear,
+    /// so the feedback is at the cursor rather than off in a corner.
+    private lazy var draftHUD: NSPanel = {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 230, height: 40),
+            contentRect: NSRect(x: 0, y: 0, width: 196, height: 30),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: true)
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.hasShadow = true
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
@@ -265,29 +272,66 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         effect.material = .hudWindow
         effect.state = .active
         effect.wantsLayer = true
-        effect.layer?.cornerRadius = 10
+        effect.layer?.cornerRadius = 8
         effect.layer?.masksToBounds = true
 
-        let label = NSTextField(labelWithString: "🧠  Smriti is drafting a reply…")
-        label.font = .systemFont(ofSize: 13, weight: .medium)
-        label.frame = NSRect(x: 14, y: 11, width: 210, height: 18)
-        effect.addSubview(label)
+        draftLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        draftLabel.textColor = .labelColor
+        draftLabel.frame = NSRect(x: 10, y: 6, width: 176, height: 18)
+        effect.addSubview(draftLabel)
         panel.contentView = effect
         return panel
     }()
 
-    private func setHUDVisible(_ visible: Bool) {
-        if visible {
-            if let screen = NSScreen.main {
-                let frame = screen.visibleFrame
-                hud.setFrameOrigin(NSPoint(
-                    x: frame.maxX - hud.frame.width - 16,
-                    y: frame.maxY - hud.frame.height - 12))
-            }
-            hud.orderFrontRegardless()
-        } else {
-            hud.orderOut(nil)
+    private func showDraftHUD(anchor: CGRect?) {
+        positionDraftHUD(anchor: anchor)
+        draftDotPhase = 0
+        updateDraftLabel()
+        draftHUD.orderFrontRegardless()
+        draftDotsTimer?.invalidate()
+        draftDotsTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) {
+            [weak self] _ in
+            guard let self else { return }
+            self.draftDotPhase = (self.draftDotPhase + 1) % 4
+            self.updateDraftLabel()
         }
+    }
+
+    private func hideDraftHUD() {
+        draftDotsTimer?.invalidate()
+        draftDotsTimer = nil
+        draftHUD.orderOut(nil)
+    }
+
+    private func updateDraftLabel() {
+        // Pad to a fixed 3-dot width so the trailing hint doesn't jitter.
+        let dots = String(repeating: ".", count: draftDotPhase)
+            + String(repeating: " ", count: 3 - draftDotPhase)
+        draftLabel.stringValue = "🧠  Smriti drafting\(dots)  ⎋ esc"
+    }
+
+    /// Place the pill just below the caret. AX gives a top-left-origin rect;
+    /// flip it into Cocoa's bottom-left space, fall back to the mouse, and
+    /// clamp onto the screen it lands on.
+    private func positionDraftHUD(anchor: CGRect?) {
+        let size = draftHUD.frame.size
+        var origin: NSPoint
+        if let ax = anchor {
+            // AX rect is top-left origin; place the pill just above the anchor's
+            // top edge, left-aligned to it, in Cocoa's bottom-left space.
+            let primaryH = NSScreen.screens.first?.frame.height ?? 0
+            let topEdgeCocoaY = primaryH - ax.origin.y
+            origin = NSPoint(x: ax.origin.x, y: topEdgeCocoaY + 4)
+        } else {
+            let m = NSEvent.mouseLocation
+            origin = NSPoint(x: m.x + 12, y: m.y + 10)
+        }
+        let screen = NSScreen.screens.first { $0.frame.contains(origin) } ?? NSScreen.main
+        if let vf = screen?.visibleFrame {
+            origin.x = min(max(origin.x, vf.minX + 4), vf.maxX - size.width - 4)
+            origin.y = min(max(origin.y, vf.minY + 4), vf.maxY - size.height - 4)
+        }
+        draftHUD.setFrameOrigin(origin)
     }
 
     /// Lightweight notification via NSUserNotification's modern replacement
