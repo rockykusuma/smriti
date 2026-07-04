@@ -4,8 +4,13 @@ import Foundation
 import ScreenCaptureKit
 
 /// Records a meeting as two local tracks: system audio (the other
-/// participants, via ScreenCaptureKit) and the microphone (the user).
-/// Nothing leaves the Mac; files live under Application Support/Smriti.
+/// participants) and the microphone (the user) — both via ScreenCaptureKit.
+///
+/// The mic is captured through SCK (macOS 15+) rather than AVAudioEngine:
+/// VoIP apps like WhatsApp hold the input device during a call, which starves
+/// an AVAudioEngine tap (it records silence). SCK's microphone capture coexists
+/// with the calling app. Nothing leaves the Mac; files live under
+/// Application Support/Smriti.
 final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     struct Recording {
@@ -17,20 +22,12 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private var stream: SCStream?
-    private let engine = AVAudioEngine()
     private var systemFile: AVAudioFile?
     private var micFile: AVAudioFile?
-    private var micConverter: AVAudioConverter?
-    /// Mono 16 kHz in AVAudioFile's standard (deinterleaved Float32) format —
-    /// small, recognizer-friendly, and matches the file's processing format so
-    /// buffer writes don't hit a CoreAudio conversion assert.
-    private let micTargetFormat = AVAudioFormat(
-        standardFormatWithSampleRate: 16000, channels: 1)!
+    /// Loudest sample seen on the mic track — to detect a silent recording.
+    private var micPeak: Float = 0
     private(set) var current: Recording?
     private let sampleQueue = DispatchQueue(label: "smriti.meeting.audio")
-    /// Loudest sample seen on the mic track — used to detect a silent
-    /// recording (e.g. the input device delivered no audio).
-    private var micPeak: Float = 0
 
     var isRecording: Bool { current != nil }
 
@@ -38,6 +35,13 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     /// prompts on first use.
     func start(appName: String) throws {
         guard current == nil else { return }
+
+        // Ensure Microphone access (SCK mic capture needs it too).
+        if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                fputs("smriti meeting: microphone access \(granted ? "granted" : "DENIED")\n", stderr)
+            }
+        }
 
         let stamp = DateFormatter()
         stamp.dateFormat = "yyyy-MM-dd_HHmm"
@@ -54,51 +58,50 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             startedAt: Date(),
             appName: appName)
 
-        // Make sure we actually hold Microphone access — a denied grant makes
-        // AVAudioEngine deliver silent buffers rather than erroring.
-        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
-        if micAuth != .authorized {
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                fputs("smriti meeting: microphone access \(granted ? "granted" : "DENIED — recording will be silent")\n", stderr)
-            }
-        }
-
-        // Mic track (the user's side), normalized to mono 16 kHz. The raw
-        // input node is frequently multi-channel float, which the on-device
-        // recognizer reads as silence — so convert as we capture.
         micPeak = 0
-        let micFormat = engine.inputNode.outputFormat(forBus: 0)
-        fputs("smriti meeting: mic input device '\(MeetingRecorder.defaultInputDeviceName())' — \(micFormat.channelCount) ch, \(Int(micFormat.sampleRate)) Hz\n", stderr)
-        micFile = try AVAudioFile(forWriting: recording.micTrack, settings: micTargetFormat.settings)
-        micConverter = AVAudioConverter(from: micFormat, to: micTargetFormat)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { [weak self] buffer, _ in
-            self?.writeMic(buffer)
-        }
-        try engine.start()
+        current = recording // set before the async callback so handlers write
 
-        // System-audio track (everyone else). Audio-only SCK stream.
+        guard #available(macOS 15.0, *) else {
+            fputs("smriti meeting: mic capture needs macOS 15+; recording system audio only\n", stderr)
+            startStream(recording: recording, captureMic: false)
+            fputs("smriti meeting: recording started (\(appName)) → \(dir.path)\n", stderr)
+            return
+        }
+        fputs("smriti meeting: mic via ScreenCaptureKit ('\(MeetingRecorder.defaultInputDeviceName())')\n", stderr)
+        startStream(recording: recording, captureMic: true)
+        fputs("smriti meeting: recording started (\(appName)) → \(dir.path)\n", stderr)
+    }
+
+    private func startStream(recording: Recording, captureMic: Bool) {
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] content, error in
             guard let self else { return }
             guard let display = content?.displays.first else {
-                fputs("smriti meeting: no display for system audio (\(error.map(String.init(describing:)) ?? "unknown"))\n", stderr)
+                fputs("smriti meeting: no display for capture (\(error.map(String.init(describing:)) ?? "unknown")) — grant Screen Recording\n", stderr)
                 return
             }
             let filter = SCContentFilter(display: display, excludingWindows: [])
             let config = SCStreamConfiguration()
             config.capturesAudio = true
             config.excludesCurrentProcessAudio = true
-            // Keep video work negligible; SCK requires a video stream.
+            if captureMic, #available(macOS 15.0, *) {
+                config.captureMicrophone = true
+            }
+            // SCK requires a video stream; keep it negligible.
             config.width = 2
             config.height = 2
             config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+
             let stream = SCStream(filter: filter, configuration: config, delegate: self)
             do {
                 try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: self.sampleQueue)
+                if captureMic, #available(macOS 15.0, *) {
+                    try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: self.sampleQueue)
+                }
                 stream.startCapture { error in
                     if let error {
-                        fputs("smriti meeting: system audio failed: \(error) (grant Screen Recording in System Settings)\n", stderr)
+                        fputs("smriti meeting: capture failed: \(error) (grant Screen Recording in System Settings)\n", stderr)
                     } else {
-                        fputs("smriti meeting: system audio rolling\n", stderr)
+                        fputs("smriti meeting: capture rolling\n", stderr)
                     }
                 }
                 self.stream = stream
@@ -106,51 +109,82 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 fputs("smriti meeting: stream setup failed: \(error)\n", stderr)
             }
         }
-
-        current = recording
-        fputs("smriti meeting: recording started (\(appName)) → \(dir.path)\n", stderr)
     }
 
     /// Stop and return the finished recording's metadata.
     func stop() -> Recording? {
         guard let recording = current else { return nil }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        micFile = nil
-        micConverter = nil
         stream?.stopCapture { _ in }
         stream = nil
         systemFile = nil
+        micFile = nil
         current = nil
         fputs("smriti meeting: recording stopped (\(Int(Date().timeIntervalSince(recording.startedAt)))s)\n", stderr)
         if micPeak < 1e-5 {
-            fputs("smriti meeting: WARNING — mic track was silent (peak \(micPeak)); the input device delivered no audio. Check the mic input source and that no virtual audio device is the default input.\n", stderr)
+            fputs("smriti meeting: WARNING — mic track was silent (peak \(micPeak)); the calling app may have blocked mic capture.\n", stderr)
         }
         return recording
     }
 
-    /// Convert one captured mic buffer to mono 16 kHz and append it.
-    private func writeMic(_ input: AVAudioPCMBuffer) {
-        guard let converter = micConverter, let file = micFile else { return }
-        let ratio = micTargetFormat.sampleRate / input.format.sampleRate
-        let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 1024
-        guard let output = AVAudioPCMBuffer(
-            pcmFormat: micTargetFormat, frameCapacity: max(capacity, 1024)) else { return }
-        var supplied = false
-        var error: NSError?
-        let status = converter.convert(to: output, error: &error) { _, outStatus in
-            if supplied { outStatus.pointee = .noDataNow; return nil }
-            supplied = true
-            outStatus.pointee = .haveData
-            return input
+    // MARK: - SCStreamOutput
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard current != nil, sampleBuffer.isValid,
+              let description = CMSampleBufferGetFormatDescription(sampleBuffer)
+        else { return }
+        let format = AVAudioFormat(cmAudioFormatDescription: description)
+
+        let isMic: Bool
+        if #available(macOS 15.0, *) { isMic = (type == .microphone) } else { isMic = false }
+        guard isMic || type == .audio else { return }
+
+        let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+        guard frames > 0,
+              let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)
+        else { return }
+        pcm.frameLength = frames
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer, at: 0, frameCount: Int32(frames),
+            into: pcm.mutableAudioBufferList)
+        guard status == noErr else { return }
+
+        do {
+            if isMic {
+                if micFile == nil, let recording = current {
+                    micFile = try AVAudioFile(forWriting: recording.micTrack, settings: format.settings)
+                }
+                try micFile?.write(from: pcm)
+                trackMicPeak(pcm)
+            } else {
+                if systemFile == nil, let recording = current {
+                    systemFile = try AVAudioFile(forWriting: recording.systemTrack, settings: format.settings)
+                }
+                try systemFile?.write(from: pcm)
+            }
+        } catch {
+            fputs("smriti meeting: track write failed: \(error)\n", stderr)
         }
-        guard status != .error, output.frameLength > 0 else { return }
-        if let samples = output.floatChannelData?[0] {
-            var peak: Float = 0
-            for i in 0..<Int(output.frameLength) { peak = max(peak, abs(samples[i])) }
-            if peak > micPeak { micPeak = peak }
+    }
+
+    private func trackMicPeak(_ buffer: AVAudioPCMBuffer) {
+        guard let data = buffer.floatChannelData else { return }
+        let frames = Int(buffer.frameLength)
+        let channels = Int(buffer.format.channelCount)
+        var peak: Float = 0
+        if buffer.format.isInterleaved {
+            let p = data[0]
+            for i in 0..<(frames * channels) { peak = max(peak, abs(p[i])) }
+        } else {
+            for c in 0..<channels {
+                let p = data[c]
+                for i in 0..<frames { peak = max(peak, abs(p[i])) }
+            }
         }
-        try? file.write(from: output)
+        if peak > micPeak { micPeak = peak }
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        fputs("smriti meeting: stream stopped: \(error)\n", stderr)
     }
 
     /// Name of the current default input device, for diagnostics.
@@ -171,39 +205,5 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
               let cf = name?.takeRetainedValue()
         else { return "unknown" }
         return cf as String
-    }
-
-    // MARK: - SCStreamOutput
-
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio, current != nil,
-              sampleBuffer.isValid,
-              let description = CMSampleBufferGetFormatDescription(sampleBuffer)
-        else { return }
-        let format = AVAudioFormat(cmAudioFormatDescription: description)
-
-        let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
-        guard frames > 0,
-              let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)
-        else { return }
-        pcm.frameLength = frames
-        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
-            sampleBuffer, at: 0, frameCount: Int32(frames),
-            into: pcm.mutableAudioBufferList)
-        guard status == noErr else { return }
-
-        do {
-            if systemFile == nil, let recording = current {
-                systemFile = try AVAudioFile(
-                    forWriting: recording.systemTrack, settings: format.settings)
-            }
-            try systemFile?.write(from: pcm)
-        } catch {
-            fputs("smriti meeting: system track write failed: \(error)\n", stderr)
-        }
-    }
-
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        fputs("smriti meeting: system audio stream stopped: \(error)\n", stderr)
     }
 }
