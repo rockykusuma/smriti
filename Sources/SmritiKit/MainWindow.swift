@@ -84,7 +84,11 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         sidebar.style = .sourceList
         sidebar.rowSizeStyle = .medium
         sidebar.headerView = nil
-        sidebar.addTableColumn(NSTableColumn(identifier: .init("section")))
+        let sideCol = NSTableColumn(identifier: .init("section"))
+        sideCol.width = 184
+        sideCol.resizingMask = .autoresizingMask
+        sidebar.addTableColumn(sideCol)
+        sidebar.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         sidebar.dataSource = self
         sidebar.delegate = self
         sidebar.backgroundColor = Theme.sidebar
@@ -339,10 +343,11 @@ final class HomeSection: NSObject, MainSection {
     func makeView() -> NSView {
         if let view { return view }
         let heading = NSTextField(labelWithString: "Smriti")
-        heading.font = .systemFont(ofSize: 30, weight: .bold)
+        heading.font = Theme.serif(32, .semibold)
+        heading.textColor = Theme.ink
         let subtitle = NSTextField(labelWithString: "A local memory for your Mac.")
-        subtitle.font = .systemFont(ofSize: 13)
-        subtitle.textColor = .secondaryLabelColor
+        subtitle.font = Theme.body(13)
+        subtitle.textColor = Theme.inkSecondary
 
         statusLabel.font = .systemFont(ofSize: 16, weight: .semibold)
         statsLabel.font = .systemFont(ofSize: 13)
@@ -431,7 +436,8 @@ final class SettingsSection: NSObject, MainSection {
     func makeView() -> NSView {
         if let view { return view }
         let heading = NSTextField(labelWithString: "Settings")
-        heading.font = .systemFont(ofSize: 24, weight: .bold)
+        heading.font = Theme.serif(26, .semibold)
+        heading.textColor = Theme.ink
 
         let backendLabel = NSTextField(labelWithString: "Reply drafts by")
         backendLabel.font = .systemFont(ofSize: 13, weight: .medium)
