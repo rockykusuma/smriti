@@ -569,13 +569,12 @@ final class SettingsSection: NSObject, MainSection {
 
     func willAppear() {
         refresh()
-        // Cheap, synchronous: does the binary exist? Deeper check is on demand.
         if ClaudeCLI.path() == nil {
             loginStatusLabel.stringValue = "⚠︎ Claude CLI not found. Install Claude Code, then log in."
             loginButton.isEnabled = false
         } else {
-            loginStatusLabel.stringValue = "Reply drafts, chronicles, and tone learning need the Claude CLI logged in. Use “Check status” to verify."
             loginButton.isEnabled = true
+            checkLogin() // cheap (claude auth status), so run it on open
         }
     }
 
