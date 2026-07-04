@@ -9,20 +9,23 @@ final class PlaceholderTextView: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard string.isEmpty else { return }
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font ?? NSFont.systemFont(ofSize: 13),
-            .foregroundColor: NSColor.placeholderTextColor,
-        ]
         (placeholderString as NSString).draw(
             at: NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height),
-            withAttributes: attrs)
+            withAttributes: [.font: font ?? Theme.body(14), .foregroundColor: Theme.inkTertiary])
     }
 }
 
-/// "Ask Smriti": a chat window over your captured memory. Each question runs
-/// an agentic Sonnet turn (via `MemoryChat`) that calls Smriti's own MCP tools
-/// to find answers, streams the reply, and lists what it looked at. Snapshot
-/// ids in answers are clickable and open the full capture.
+/// A circular, filled icon button (used for the composer's send action).
+final class CircleButton: NSButton {
+    override func draw(_ dirtyRect: NSRect) {
+        layer?.cornerRadius = bounds.height / 2
+        super.draw(dirtyRect)
+    }
+}
+
+/// "Ask Smriti": a chat window over your captured memory, styled to feel calm
+/// and editorial. Each question runs an agentic Sonnet turn (via `MemoryChat`)
+/// that calls Smriti's own MCP tools; snapshot ids in answers are clickable.
 final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     let title = "Ask Smriti"
     let symbol = "sparkles"
@@ -32,10 +35,11 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     private var view: NSView?
     private let transcript = NSTextView()
     private let inputView = PlaceholderTextView()
-    private let sendButton = NSButton()
+    private let composerCard = Theme.makeCard()
+    private let sendButton = CircleButton()
     private let newChatButton = NSButton()
     private let statusLabel = NSTextField(labelWithString: "")
-    private var suggestions: NSView?
+    private var emptyState: NSView?
     private var busy = false
     private var answerStart = 0
     private var warmed = false
@@ -43,7 +47,7 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     private let suggestionQuestions = [
         "What did I work on today?",
         "Summarize what I did yesterday",
-        "What projects have I been working on this week?",
+        "What have I been working on this week?",
     ]
 
     init(store: Store) {
@@ -55,35 +59,62 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
 
     func makeView() -> NSView {
         if let view { return view }
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
+        let W: CGFloat = 739, H: CGFloat = 620
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: W, height: H))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = Theme.surface.cgColor
 
-        // Multiline input (Enter sends, Shift+Enter newline).
-        inputView.placeholderString = "Ask about anything you've seen…   (Shift+Enter for a new line)"
-        inputView.font = .systemFont(ofSize: 13)
+        // Composer card, docked at the bottom.
+        let cardH: CGFloat = 104
+        composerCard.frame = NSRect(x: Theme.Space.lg, y: Theme.Space.md,
+                                    width: W - 2*Theme.Space.lg, height: cardH)
+        composerCard.autoresizingMask = [.width, .maxYMargin]
+
+        inputView.placeholderString = "Ask about anything you've seen…"
+        inputView.font = Theme.body(14)
+        inputView.textColor = Theme.ink
         inputView.isRichText = false
-        inputView.textContainerInset = NSSize(width: 4, height: 6)
+        inputView.drawsBackground = false
+        inputView.textContainerInset = NSSize(width: 6, height: 4)
         inputView.isVerticallyResizable = true
         inputView.isHorizontallyResizable = false
         inputView.autoresizingMask = [.width]
         inputView.textContainer?.widthTracksTextView = true
         inputView.delegate = self
-        let inputScroll = NSScrollView(frame: NSRect(x: 16, y: 10, width: 739 - 16 - 92, height: 54))
-        inputScroll.borderType = .bezelBorder
+        let inputScroll = NSScrollView(frame: NSRect(x: 14, y: 42, width: composerCard.frame.width - 28, height: cardH - 42 - 8))
+        inputScroll.drawsBackground = false
         inputScroll.hasVerticalScroller = true
         inputScroll.documentView = inputView
-        inputScroll.autoresizingMask = [.width, .maxYMargin]
+        inputScroll.autoresizingMask = [.width, .height]
+        composerCard.addSubview(inputScroll)
 
-        sendButton.title = "Ask"
-        sendButton.bezelStyle = .rounded
-        sendButton.keyEquivalent = "\r"
+        let sSize: CGFloat = 32
+        sendButton.frame = NSRect(x: composerCard.frame.width - 14 - sSize, y: 12, width: sSize, height: sSize)
+        sendButton.autoresizingMask = [.minXMargin]
+        sendButton.isBordered = false
+        sendButton.wantsLayer = true
+        sendButton.bezelStyle = .regularSquare
+        sendButton.title = ""
+        sendButton.layer?.backgroundColor = Theme.accent.cgColor
+        sendButton.contentTintColor = .white
+        let arrow = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Send")?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .semibold))
+        sendButton.image = arrow
+        sendButton.imagePosition = .imageOnly
         sendButton.target = self
         sendButton.action = #selector(send)
-        sendButton.frame = NSRect(x: 739 - 16 - 76, y: 12, width: 76, height: 30)
-        sendButton.autoresizingMask = [.minXMargin, .maxYMargin]
+        composerCard.addSubview(sendButton)
 
-        statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.frame = NSRect(x: 18, y: 68, width: 739 - 36, height: 15)
+        let hint = NSTextField(labelWithString: "⏎ send   ·   ⇧⏎ new line")
+        hint.font = Theme.body(10)
+        hint.textColor = Theme.inkTertiary
+        hint.frame = NSRect(x: 16, y: 15, width: 220, height: 14)
+        hint.autoresizingMask = [.maxXMargin]
+        composerCard.addSubview(hint)
+
+        statusLabel.font = Theme.body(11)
+        statusLabel.textColor = Theme.accent
+        statusLabel.frame = NSRect(x: Theme.Space.lg + 4, y: Theme.Space.md + cardH + 6, width: W - 2*Theme.Space.lg, height: 15)
         statusLabel.autoresizingMask = [.width, .maxYMargin]
 
         newChatButton.title = "New chat"
@@ -91,24 +122,29 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
         newChatButton.controlSize = .small
         newChatButton.target = self
         newChatButton.action = #selector(newChat)
-        newChatButton.frame = NSRect(x: 739 - 16 - 90, y: 588, width: 90, height: 24)
+        newChatButton.frame = NSRect(x: W - 16 - 84, y: H - 34, width: 84, height: 22)
         newChatButton.autoresizingMask = [.minXMargin, .minYMargin]
         newChatButton.isHidden = true
 
         transcript.delegate = self
-        transcript.linkTextAttributes = [
-            .foregroundColor: NSColor.linkColor,
-            .cursor: NSCursor.pointingHand,
-        ]
-        let scroll = MasterDetailSection.makeTextScroll(
-            transcript, frame: NSRect(x: 0, y: 90, width: 739, height: 620 - 90 - 42))
-        scroll.autoresizingMask = [.width, .height]
+        transcript.isEditable = false
+        transcript.drawsBackground = false
+        transcript.textContainerInset = NSSize(width: 30, height: 26)
+        transcript.isVerticallyResizable = true
+        transcript.isHorizontallyResizable = false
+        transcript.autoresizingMask = [.width]
+        transcript.textContainer?.widthTracksTextView = true
+        transcript.linkTextAttributes = [.foregroundColor: Theme.accent, .cursor: NSCursor.pointingHand]
+        let tScroll = NSScrollView(frame: NSRect(x: 0, y: Theme.Space.md + cardH + 26, width: W, height: H - (Theme.Space.md + cardH + 26)))
+        tScroll.drawsBackground = false
+        tScroll.hasVerticalScroller = true
+        tScroll.documentView = transcript
+        tScroll.autoresizingMask = [.width, .height]
 
-        container.addSubview(scroll)
+        container.addSubview(tScroll)
         container.addSubview(newChatButton)
         container.addSubview(statusLabel)
-        container.addSubview(inputScroll)
-        container.addSubview(sendButton)
+        container.addSubview(composerCard)
         showEmptyState(in: container)
 
         view = container
@@ -128,40 +164,58 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     private func showEmptyState(in container: NSView) {
         let box = NSStackView()
         box.orientation = .vertical
-        box.alignment = .leading
-        box.spacing = 10
+        box.alignment = .centerX
+        box.spacing = Theme.Space.sm
         box.translatesAutoresizingMaskIntoConstraints = false
 
-        let heading = NSTextField(labelWithString: "Ask Smriti")
-        heading.font = .systemFont(ofSize: 22, weight: .bold)
-        let sub = NSTextField(wrappingLabelWithString:
-            "Ask anything about what you've seen on your Mac. Smriti searches your captured screen memory and daily chronicles to answer — grounded in what you actually did.")
-        sub.font = .systemFont(ofSize: 13)
-        sub.textColor = .secondaryLabelColor
-        sub.preferredMaxLayoutWidth = 520
+        let heading = NSTextField(labelWithString: "What's on your mind?")
+        heading.font = Theme.serif(28, .medium)
+        heading.textColor = Theme.ink
+        heading.alignment = .center
+        let sub = NSTextField(labelWithString: "Ask anything about what you've seen — grounded in your real work.")
+        sub.font = Theme.body(13)
+        sub.textColor = Theme.inkSecondary
+        sub.alignment = .center
         box.addArrangedSubview(heading)
         box.addArrangedSubview(sub)
-        box.setCustomSpacing(18, after: sub)
+        box.setCustomSpacing(Theme.Space.lg, after: sub)
 
         for q in suggestionQuestions {
-            let b = NSButton(title: q, target: self, action: #selector(suggestionClicked(_:)))
-            b.bezelStyle = .rounded
-            box.addArrangedSubview(b)
+            box.addArrangedSubview(makePill(q))
         }
 
         container.addSubview(box)
         NSLayoutConstraint.activate([
-            box.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
-            box.topAnchor.constraint(equalTo: container.topAnchor, constant: 56),
-            box.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
+            box.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            box.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: 40),
+            box.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 40),
         ])
-        suggestions = box
+        emptyState = box
+    }
+
+    private func makePill(_ text: String) -> NSButton {
+        let b = NSButton(title: "", target: self, action: #selector(suggestionClicked(_:)))
+        b.isBordered = false
+        b.wantsLayer = true
+        b.layer?.backgroundColor = Theme.card.cgColor
+        b.layer?.borderColor = Theme.border.cgColor
+        b.layer?.borderWidth = 1
+        b.layer?.cornerRadius = 15
+        b.layer?.cornerCurve = .continuous
+        b.attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: Theme.body(13), .foregroundColor: Theme.ink,
+        ])
+        let width = (text as NSString).size(withAttributes: [.font: Theme.body(13)]).width + 32
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        b.widthAnchor.constraint(equalToConstant: ceil(width)).isActive = true
+        return b
     }
 
     // MARK: - Actions
 
     @objc private func suggestionClicked(_ sender: NSButton) {
-        inputView.string = sender.title
+        inputView.string = sender.attributedTitle.string
         send()
     }
 
@@ -180,12 +234,13 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
         guard !q.isEmpty, !busy else { return }
         inputView.string = ""
         inputView.needsDisplay = true
-        suggestions?.removeFromSuperview()
-        suggestions = nil
+        emptyState?.removeFromSuperview()
+        emptyState = nil
         newChatButton.isHidden = false
 
         busy = true
         sendButton.isEnabled = false
+        sendButton.layer?.backgroundColor = Theme.inkTertiary.cgColor
         appendUser(q)
         beginAnswer()
         statusLabel.stringValue = "Thinking…"
@@ -204,18 +259,19 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
                 self.finishAnswer(answer, tools: tools)
                 self.busy = false
                 self.sendButton.isEnabled = true
+                self.sendButton.layer?.backgroundColor = Theme.accent.cgColor
                 self.statusLabel.stringValue = ""
             }
         }
     }
 
-    // MARK: - NSTextViewDelegate (Enter to send, link clicks)
+    // MARK: - NSTextViewDelegate
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard textView === inputView, commandSelector == #selector(NSResponder.insertNewline(_:))
         else { return false }
         let shiftHeld = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
-        if shiftHeld { return false } // let it insert a newline
+        if shiftHeld { return false }
         send()
         return true
     }
@@ -233,18 +289,17 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     private func appendUser(_ text: String) {
         guard let ts = transcript.textStorage else { return }
         let label = NSMutableParagraphStyle()
-        label.paragraphSpacingBefore = 18
+        label.paragraphSpacingBefore = 22
         label.paragraphSpacing = 3
-        ts.append(NSAttributedString(string: "You\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.tertiaryLabelColor, .paragraphStyle: label,
+        ts.append(NSAttributedString(string: "YOU\n", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: Theme.inkTertiary, .kern: 1.2, .paragraphStyle: label,
         ]))
         let body = NSMutableParagraphStyle()
-        body.lineSpacing = 3
+        body.lineSpacing = 4
         body.paragraphSpacing = 8
         ts.append(NSAttributedString(string: text + "\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 14),
-            .foregroundColor: NSColor.labelColor, .paragraphStyle: body,
+            .font: Theme.body(15), .foregroundColor: Theme.ink, .paragraphStyle: body,
         ]))
         scrollToBottom()
     }
@@ -252,11 +307,11 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     private func beginAnswer() {
         guard let ts = transcript.textStorage else { return }
         let label = NSMutableParagraphStyle()
-        label.paragraphSpacingBefore = 4
+        label.paragraphSpacingBefore = 6
         label.paragraphSpacing = 3
-        ts.append(NSAttributedString(string: "Smriti\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.systemPink, .paragraphStyle: label,
+        ts.append(NSAttributedString(string: "SMRITI\n", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: Theme.accent, .kern: 1.2, .paragraphStyle: label,
         ]))
         answerStart = ts.length
         scrollToBottom()
@@ -265,7 +320,7 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     private func appendAnswerDelta(_ fragment: String) {
         guard let ts = transcript.textStorage else { return }
         ts.append(NSAttributedString(string: fragment, attributes: [
-            .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor,
+            .font: Theme.body(15), .foregroundColor: Theme.ink,
         ]))
         scrollToBottom()
     }
@@ -279,18 +334,16 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
         } else {
             ts.replaceCharacters(in: range, with: NSAttributedString(
                 string: "I couldn't get an answer. Check that the Claude CLI is logged in (Settings → Claude account).\n",
-                attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor]))
+                attributes: [.font: Theme.body(13), .foregroundColor: Theme.inkSecondary]))
         }
         scrollToBottom()
     }
 
-    /// Turn `#123` snapshot references into clickable links.
     private func linkifySnapshots(_ attributed: NSAttributedString) -> NSAttributedString {
         let m = NSMutableAttributedString(attributedString: attributed)
         let ns = m.string as NSString
         guard let regex = try? NSRegularExpression(pattern: "#(\\d+)") else { return m }
-        let matches = regex.matches(in: m.string, range: NSRange(location: 0, length: ns.length))
-        for match in matches.reversed() {
+        for match in regex.matches(in: m.string, range: NSRange(location: 0, length: ns.length)).reversed() {
             let id = ns.substring(with: match.range(at: 1))
             guard let url = URL(string: "smriti-snapshot:\(id)") else { continue }
             m.addAttribute(.link, value: url, range: match.range)
@@ -303,11 +356,10 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
         var seen = Set<String>()
         let unique = items.filter { seen.insert($0).inserted }
         let para = NSMutableParagraphStyle()
-        para.paragraphSpacingBefore = 6
+        para.paragraphSpacingBefore = 8
         para.paragraphSpacing = 14
-        return NSAttributedString(string: "🔎 " + unique.joined(separator: "   ·   ") + "\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 10),
-            .foregroundColor: NSColor.tertiaryLabelColor, .paragraphStyle: para,
+        return NSAttributedString(string: "🔎  " + unique.joined(separator: "   ·   ") + "\n", attributes: [
+            .font: Theme.body(10), .foregroundColor: Theme.inkTertiary, .paragraphStyle: para,
         ])
     }
 
@@ -323,9 +375,7 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
         }
     }
 
-    private func scrollToBottom() {
-        transcript.scrollToEndOfDocument(nil)
-    }
+    private func scrollToBottom() { transcript.scrollToEndOfDocument(nil) }
 
     // MARK: - Snapshot viewer
 
@@ -356,10 +406,13 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
             backing: .buffered, defer: false)
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
+        Theme.style(window: panel, background: Theme.surface)
         let scroll = MasterDetailSection.makeTextScroll(
             snapshotText, frame: NSRect(x: 0, y: 0, width: 560, height: 460))
         scroll.autoresizingMask = [.width, .height]
         snapshotText.isEditable = false
+        snapshotText.drawsBackground = false
+        snapshotText.textColor = Theme.ink
         panel.contentView = scroll
         return panel
     }
