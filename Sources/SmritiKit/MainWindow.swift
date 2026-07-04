@@ -22,7 +22,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     private lazy var sections: [MainSection] = [
         HomeSection(store: store, owner: self),
-        AskSection(),
+        AskSection(store: store),
         MasterDetailSection(title: "Meetings", symbol: "waveform",
                             empty: "No recorded meetings yet. When a call starts, Smriti asks before recording.",
                             loader: { [store] in
@@ -82,7 +82,8 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         sidebar.addTableColumn(NSTableColumn(identifier: .init("section")))
         sidebar.dataSource = self
         sidebar.delegate = self
-        sidebar.selectionHighlightStyle = .sourceList
+        // .style = .sourceList already provides the source-list selection look;
+        // the old selectionHighlightStyle = .sourceList is deprecated.
         let sideScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 620))
         sideScroll.documentView = sidebar
         sideScroll.hasVerticalScroller = true

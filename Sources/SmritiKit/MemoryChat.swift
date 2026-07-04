@@ -9,9 +9,46 @@ import Foundation
 public final class MemoryChat {
 
     /// A tool the agent invoked while answering (surfaced as activity + sources).
-    public struct ToolCall {
+    public struct ToolCall: Equatable {
         public let name: String     // e.g. "search_memory"
         public let summary: String  // e.g. "strix" or "2026-07-04"
+    }
+
+    /// One meaningful thing decoded from the claude stream-json output.
+    enum Event: Equatable {
+        case delta(String)        // streamed answer text
+        case tools([ToolCall])    // the agent called memory tools
+        case result(String?)      // turn finished (final text, or nil on error)
+        case ignore               // everything else
+    }
+
+    /// Pure decode of one stream-json event dict — kept separate from the I/O
+    /// loop so it can be unit-tested.
+    static func parse(_ event: [String: Any]) -> Event {
+        switch event["type"] as? String {
+        case "stream_event":
+            if let inner = event["event"] as? [String: Any],
+               inner["type"] as? String == "content_block_delta",
+               let delta = inner["delta"] as? [String: Any],
+               delta["type"] as? String == "text_delta",
+               let fragment = delta["text"] as? String {
+                return .delta(fragment)
+            }
+            return .ignore
+        case "assistant":
+            if let msg = event["message"] as? [String: Any],
+               let content = msg["content"] as? [[String: Any]] {
+                let calls = content
+                    .filter { $0["type"] as? String == "tool_use" }
+                    .map { describe($0) }
+                if !calls.isEmpty { return .tools(calls) }
+            }
+            return .ignore
+        case "result":
+            return .result(event["result"] as? String)
+        default:
+            return .ignore
+        }
     }
 
     private var process: Process?
@@ -166,26 +203,11 @@ public final class MemoryChat {
                 buffer = Data(buffer.suffix(from: buffer.index(after: nl)))
                 guard let event = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
                 else { continue }
-                switch event["type"] as? String {
-                case "stream_event":
-                    if let inner = event["event"] as? [String: Any],
-                       inner["type"] as? String == "content_block_delta",
-                       let delta = inner["delta"] as? [String: Any],
-                       delta["type"] as? String == "text_delta",
-                       let fragment = delta["text"] as? String {
-                        onDelta(fragment)
-                    }
-                case "assistant":
-                    if let msg = event["message"] as? [String: Any],
-                       let content = msg["content"] as? [[String: Any]] {
-                        for block in content where block["type"] as? String == "tool_use" {
-                            onTool(Self.describe(block))
-                        }
-                    }
-                case "result":
-                    return event["result"] as? String
-                default:
-                    break
+                switch MemoryChat.parse(event) {
+                case .delta(let fragment): onDelta(fragment)
+                case .tools(let calls): calls.forEach(onTool)
+                case .result(let text): return text
+                case .ignore: break
                 }
             }
         }
