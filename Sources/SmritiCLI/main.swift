@@ -36,6 +36,7 @@ func printUsage() {
       smriti learn-tone          Distill your writing style from captured chats (via claude)
       smriti tone                Show the stored tone profile
       smriti meetings            List recorded meeting transcripts
+      smriti transcribe [id]     Re-transcribe a saved meeting's audio (default: latest)
       smriti retention <days>    Keep raw snapshots N days (0 = forever); chronicles always kept
       smriti prune               Prune old snapshots now (normally automatic)
       smriti menubar             Menu bar app: capture + pause/resume/exclude from the bar
@@ -198,6 +199,21 @@ do {
         if rows.isEmpty { print("No recorded meetings yet. The menu bar app asks before recording any call.") }
         for row in rows {
             print("#\(row.id) \(row.windowTitle)")
+        }
+
+    case "transcribe":
+        // Recover a meeting whose live transcription failed by re-processing
+        // its saved audio. Default to the most recent meeting.
+        let idArg = args.dropFirst().first.flatMap { Int64($0) }
+        Transcriber.requestAuthorization()
+        Thread.sleep(forTimeInterval: 0.5) // let authorization settle
+        do {
+            let result = try MeetingTranscription.retranscribe(store: store, id: idArg)
+            print(result.transcript)
+            fputs("\nsmriti: updated meeting #\(result.id) — \(result.title)\n", stderr)
+        } catch {
+            fputs("smriti transcribe: \(error)\n", stderr)
+            exit(1)
         }
 
     case "mcp":

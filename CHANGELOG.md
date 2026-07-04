@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **Meeting transcription, hardened** (from the first real-call test):
+  - Mic is now recorded as mono 16 kHz. It was captured in the input device's
+    raw format (often multi-channel float), which the on-device recognizer
+    reads as silence.
+  - Transcription runs in short (~40s) chunks. Apple's on-device recognizer is
+    reliable on short clips but stalls indefinitely on long single files.
+  - Fixed a crash while normalizing audio (buffer vs. AVAudioFile processing
+    format mismatch).
+  - New `smriti transcribe [id]` re-transcribes a saved meeting's audio
+    (default: the most recent) — recover meetings whose live transcription
+    failed. Re-transcribed text stays searchable via a new FTS update trigger.
+  - The recorder now requests Microphone access explicitly, logs which input
+    device and format it binds, and warns when a recording comes out silent
+    (e.g. a virtual audio device was the default input).
+
 ## v0.7.1 — 2026-07-04
 
 - **Settings window**: menu bar → "Settings…" (⌘,) to switch the reply-assist
