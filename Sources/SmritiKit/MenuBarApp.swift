@@ -237,7 +237,14 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.global(qos: .utility).async { [store] in
             do {
                 _ = try Chronicler.chronicle(day: day, store: store)
-                self.notify(title: "Smriti", body: "Chronicle for \(day) written.")
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.notify(title: "Smriti", body: "Chronicle for \(day) written.")
+                    // Reveal it: chronicles are day-DESC, so today's is row 0
+                    // and the Chronicles section auto-selects it on open.
+                    self.mainWindow.show(
+                        section: self.mainWindow.sectionIndex(titled: "Chronicles"))
+                }
             } catch {
                 self.notify(title: "Smriti", body: "Chronicle failed: \(error)")
             }
