@@ -48,7 +48,14 @@ func printUsage() {
     """)
 }
 
-guard let command = args.first else {
+// Resolve the command. When launched with no args as a bundled app
+// (double-clicking Smriti.app), default to the menu bar experience.
+let command: String
+if let first = args.first {
+    command = first
+} else if Bundle.main.bundlePath.hasSuffix(".app") {
+    command = "menubar"
+} else {
     printUsage()
     exit(0)
 }
@@ -154,10 +161,10 @@ do {
         print("Pruned \(deleted) snapshots older than \(config.retentionDays) days. Chronicles kept.")
 
     case "menubar":
-        guard AXReader.ensureAccessibilityPermission() else {
-            fputs("smriti: Accessibility permission not granted. Enable it in System Settings > Privacy & Security > Accessibility, then re-run.\n", stderr)
-            exit(1)
-        }
+        // Prompt for Accessibility if needed, but stay alive either way — the
+        // menu bar item persists and capture begins once permission is granted,
+        // rather than the app vanishing on first launch.
+        _ = AXReader.ensureAccessibilityPermission()
         MenuBarApp.run(store: store, config: config) // blocks forever
 
     case "install-agent":
