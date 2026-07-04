@@ -22,6 +22,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     private lazy var sections: [MainSection] = [
         HomeSection(store: store, owner: self),
+        AskSection(),
         MasterDetailSection(title: "Meetings", symbol: "waveform",
                             empty: "No recorded meetings yet. When a call starts, Smriti asks before recording.",
                             loader: { [store] in
@@ -29,7 +30,6 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
                                     ($0.windowTitle, $0.content)
                                 } ?? []
                             }),
-        SearchSection(store: store),
         MasterDetailSection(title: "Chronicles", symbol: "calendar",
                             empty: "No chronicles yet. Write one from Home or the menu bar.",
                             loader: { [store] in
@@ -358,119 +358,6 @@ final class HomeSection: NSObject, MainSection {
 
     @objc private func writeChronicle() { owner?.writeChronicleNow() }
     @objc private func learnTone() { owner?.learnToneNow() }
-}
-
-// MARK: - Search
-
-final class SearchSection: NSObject, MainSection, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
-    let title = "Search"
-    let symbol = "magnifyingglass"
-    private let store: Store
-    private var view: NSView?
-
-    private let field = NSSearchField()
-    private let table = NSTableView()
-    private let text = NSTextView()
-    private var results: [Store.Snapshot] = []
-
-    init(store: Store) { self.store = store }
-
-    func makeView() -> NSView {
-        if let view { return view }
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
-
-        field.frame = NSRect(x: 16, y: 578, width: 707, height: 26)
-        field.placeholderString = "Search your captured memory…"
-        field.target = self
-        field.action = #selector(runSearch)
-        field.autoresizingMask = [.width, .minYMargin]
-
-        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: 739, height: 566))
-        split.isVertical = true
-        split.dividerStyle = .thin
-        split.autoresizingMask = [.width, .height]
-
-        let column = NSTableColumn(identifier: .init("row"))
-        column.width = 280
-        table.addTableColumn(column)
-        table.headerView = nil
-        table.rowHeight = 48
-        table.dataSource = self
-        table.delegate = self
-        let listScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 566))
-        listScroll.documentView = table
-        listScroll.hasVerticalScroller = true
-        listScroll.autoresizingMask = [.height]
-
-        let textScroll = MasterDetailSection.makeTextScroll(text,
-            frame: NSRect(x: 301, y: 0, width: 438, height: 566))
-        textScroll.autoresizingMask = [.width, .height]
-
-        split.addSubview(listScroll)
-        split.addSubview(textScroll)
-        split.setPosition(300, ofDividerAt: 0)
-
-        container.addSubview(field)
-        container.addSubview(split)
-        view = container
-        return container
-    }
-
-    func willAppear() {
-        DispatchQueue.main.async { [weak self] in
-            self?.field.window?.makeFirstResponder(self?.field)
-        }
-    }
-
-    @objc private func runSearch() {
-        let query = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            results = []
-            table.reloadData()
-            text.string = ""
-            return
-        }
-        results = (try? store.search(query, limit: 100)) ?? []
-        table.reloadData()
-        if results.isEmpty {
-            text.string = "No matches for “\(query)”."
-        } else {
-            table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        }
-    }
-
-    func numberOfRows(in tableView: NSTableView) -> Int { results.count }
-
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let s = results[row]
-        let cell = NSTableCellView()
-        let titleLabel = NSTextField(labelWithString: "\(s.app) — \(s.windowTitle)")
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        let dateLabel = NSTextField(labelWithString: s.lastSeenAt)
-        dateLabel.font = .systemFont(ofSize: 10)
-        dateLabel.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [titleLabel, dateLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
-            stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-        return cell
-    }
-
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        guard table.selectedRow >= 0, table.selectedRow < results.count else { return }
-        let s = results[table.selectedRow]
-        let header = "\(s.app) — \(s.windowTitle)\n\(s.lastSeenAt)\(s.url.isEmpty ? "" : "\n\(s.url)")"
-        text.string = "\(header)\n\(String(repeating: "─", count: 42))\n\n\(s.content)"
-        text.scrollToBeginningOfDocument(nil)
-    }
 }
 
 // MARK: - Settings
