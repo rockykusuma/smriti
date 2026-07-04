@@ -37,7 +37,8 @@ final class MeetingsBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegat
         win.isReleasedWhenClosed = false
         win.center()
 
-        let split = NSSplitView(frame: win.contentLayoutRect)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 820, height: 492))
+        let split = NSSplitView(frame: content.bounds)
         split.isVertical = true
         split.dividerStyle = .thin
         split.autoresizingMask = [.width, .height]
@@ -45,29 +46,30 @@ final class MeetingsBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegat
         // Left: meeting list
         let column = NSTableColumn(identifier: .init("meeting"))
         column.title = "Meetings"
+        column.width = 244
         table.addTableColumn(column)
         table.dataSource = self
         table.delegate = self
         table.headerView = nil
         table.rowHeight = 40
-        let listScroll = NSScrollView()
+        let listScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 260, height: 492))
         listScroll.documentView = table
         listScroll.hasVerticalScroller = true
-        listScroll.setFrameSize(NSSize(width: 260, height: 520))
 
         // Right: transcript
         text.isEditable = false
         text.font = .systemFont(ofSize: 13)
         text.textContainerInset = NSSize(width: 16, height: 16)
         text.autoresizingMask = [.width]
-        let textScroll = NSScrollView()
+        let textScroll = NSScrollView(frame: NSRect(x: 261, y: 0, width: 559, height: 492))
         textScroll.documentView = text
         textScroll.hasVerticalScroller = true
 
-        split.addArrangedSubview(listScroll)
-        split.addArrangedSubview(textScroll)
+        split.addSubview(listScroll)
+        split.addSubview(textScroll)
+        content.addSubview(split)
         split.setPosition(260, ofDividerAt: 0)
-        win.contentView = split
+        win.contentView = content
         window = win
     }
 

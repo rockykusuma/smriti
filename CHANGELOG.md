@@ -16,6 +16,8 @@
   - The recorder now requests Microphone access explicitly, logs which input
     device and format it binds, and warns when a recording comes out silent
     (e.g. a virtual audio device was the default input).
+  - New `smriti mic-check [secs]` records a few seconds and reports the input
+    device, format, and peak/RMS level — verify capture without a real call.
 
 ## v0.7.1 — 2026-07-04
 

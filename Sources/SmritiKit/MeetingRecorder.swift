@@ -154,7 +154,7 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     /// Name of the current default input device, for diagnostics.
-    private static func defaultInputDeviceName() -> String {
+    static func defaultInputDeviceName() -> String {
         var deviceID = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         var address = AudioObjectPropertyAddress(
