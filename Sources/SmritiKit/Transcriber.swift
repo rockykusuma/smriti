@@ -74,15 +74,47 @@ public enum Transcriber {
         defer { try? FileManager.default.removeItem(at: normalized) }
 
         let format = inFile.processingFormat
-        let chunkFrames = AVAudioFrameCount(format.sampleRate * 40) // ~40s clips
+        let totalSeconds = format.sampleRate > 0 ? Double(inFile.length) / format.sampleRate : 0
+
+        // Short recordings: one pass. Chunking a short clip risks cutting a
+        // phrase at a seam (which loses it), and single-file recognition is
+        // reliable at these lengths.
+        if totalSeconds <= 55 {
+            if let whole = AVAudioPCMBuffer(pcmFormat: format,
+                                            frameCapacity: AVAudioFrameCount(max(inFile.length, 1))) {
+                try? inFile.read(into: whole)
+                if chunkPeak(whole) < 0.01 { return nil } // all silence
+            }
+            let text = recognizeClip(normalized, locale: locale)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (text?.isEmpty == false) ? text : nil
+        }
+
+        // Long recordings: overlapping ~40s chunks. Apple's on-device
+        // recognizer stalls on long single files; the 4s overlap keeps speech
+        // that lands on a chunk boundary intact in at least one chunk.
+        let chunkFrames = AVAudioFrameCount(format.sampleRate * 40)
+        let overlapFrames = Int64(format.sampleRate * 4)
+        let hop = Int64(chunkFrames) - overlapFrames
         var pieces: [String] = []
         var index = 0
+        var start: Int64 = 0
 
-        while true {
+        while start < inFile.length {
+            inFile.framePosition = start
             guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames)
             else { break }
             do { try inFile.read(into: buffer, frameCount: chunkFrames) } catch { break }
             if buffer.frameLength == 0 { break }
+            index += 1
+
+            // Skip near-silent chunks: the recognizer would otherwise wait out
+            // its full timeout on silence and return nothing.
+            if chunkPeak(buffer) < 0.01 {
+                fputs("smriti transcribe: \(file.lastPathComponent) chunk \(index) skipped (silent)\n", stderr)
+                start += hop
+                continue
+            }
 
             let chunkURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("smriti-chunk-\(UUID().uuidString).caf")
@@ -91,18 +123,26 @@ public enum Transcriber {
             } // `out` is released here, flushing the file to disk before we read it.
 
             if let text = recognizeClip(chunkURL, locale: locale)?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !text.isEmpty, text != pieces.last {
                 pieces.append(text)
             }
             try? FileManager.default.removeItem(at: chunkURL)
-            index += 1
             fputs("smriti transcribe: \(file.lastPathComponent) chunk \(index) done (\(pieces.count) with speech)\n", stderr)
 
-            if buffer.frameLength < chunkFrames { break }
+            start += hop
         }
 
         let joined = pieces.joined(separator: " ")
         return joined.isEmpty ? nil : joined
+    }
+
+    /// Peak absolute amplitude of a mono float buffer.
+    private static func chunkPeak(_ buffer: AVAudioPCMBuffer) -> Float {
+        guard let ch = buffer.floatChannelData?[0] else { return 1 }
+        var peak: Float = 0
+        for i in 0..<Int(buffer.frameLength) { peak = max(peak, abs(ch[i])) }
+        return peak
     }
 
     /// Recognize a single short clip on-device (no normalization/chunking).

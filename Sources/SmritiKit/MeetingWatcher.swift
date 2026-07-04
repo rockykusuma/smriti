@@ -210,24 +210,15 @@ public final class MeetingWatcher {
 
         DispatchQueue.global(qos: .utility).async { [store] in
             fputs("smriti meetings: transcribing on-device…\n", stderr)
-            var transcript = Transcriber.meetingTranscript(recording: recording)
+            // Auto-summary (decisions/action items) prepended, via claude.
+            let transcript = MeetingSummary.compose(
+                transcript: Transcriber.meetingTranscript(recording: recording))
 
-            // Auto-summary: decisions and action items up front, via claude.
-            if !transcript.hasPrefix("(Transcription unavailable"),
-               let summary = try? ClaudeCLI.run(
-                   prompt: """
-                   Summarize this meeting transcript in markdown: 2-3 sentence \
-                   overview, then '### Decisions' and '### Action items' bullet \
-                   lists (write 'none' if none). Be specific, no filler.
-                   """,
-                   stdin: String(transcript.prefix(60_000)),
-                   extraArgs: ["--model", "haiku", "--strict-mcp-config"]),
-               !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                transcript = "## Summary\n\n\(summary.trimmingCharacters(in: .whitespacesAndNewlines))\n\n---\n\n\(transcript)"
-            }
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd HH:mm"
-            let title = "\(recording.appName) call \(formatter.string(from: recording.startedAt)) (\(Int(Date().timeIntervalSince(recording.startedAt) / 60)) min)"
+            let secs = Int(Date().timeIntervalSince(recording.startedAt))
+            let dur = secs < 60 ? "\(secs)s" : "\(secs / 60) min"
+            let title = "\(recording.appName) \(formatter.string(from: recording.startedAt)) (\(dur))"
             do {
                 try store.upsert(
                     app: "Meeting",

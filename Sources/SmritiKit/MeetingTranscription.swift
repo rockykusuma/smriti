@@ -46,21 +46,8 @@ public enum MeetingTranscription {
             throw Failure.noAudio(row.id)
         }
 
-        var transcript = Transcriber.transcript(inDirectory: dir)
-
-        // Regenerate the decisions/action-items summary when we got real text.
-        if !transcript.hasPrefix("(Transcription unavailable"),
-           let summary = try? ClaudeCLI.run(
-               prompt: """
-               Summarize this meeting transcript in markdown: 2-3 sentence \
-               overview, then '### Decisions' and '### Action items' bullet \
-               lists (write 'none' if none). Be specific, no filler.
-               """,
-               stdin: String(transcript.prefix(60_000)),
-               extraArgs: ["--model", "haiku", "--strict-mcp-config"]),
-           !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            transcript = "## Summary\n\n\(summary.trimmingCharacters(in: .whitespacesAndNewlines))\n\n---\n\n\(transcript)"
-        }
+        let transcript = MeetingSummary.compose(
+            transcript: Transcriber.transcript(inDirectory: dir))
 
         try store.updateContent(id: row.id, content: transcript)
         return Result(id: row.id, title: row.windowTitle, transcript: transcript)
