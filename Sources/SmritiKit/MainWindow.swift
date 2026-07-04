@@ -482,6 +482,8 @@ final class SettingsSection: NSObject, MainSection {
     private let backendPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
     private let statusLabel = NSTextField(labelWithString: "")
+    private let loginStatusLabel = NSTextField(labelWithString: "")
+    private let loginButton = NSButton()
 
     init(config: Config, onChange: @escaping (Config) -> Void) {
         self.config = config
@@ -518,11 +520,29 @@ final class SettingsSection: NSObject, MainSection {
         note.textColor = .tertiaryLabelColor
         note.preferredMaxLayoutWidth = 520
 
+        // Claude account: the CLI must be logged in for drafts/chronicles/tone.
+        let cliHeading = NSTextField(labelWithString: "Claude account")
+        cliHeading.font = .systemFont(ofSize: 13, weight: .medium)
+        loginStatusLabel.font = .systemFont(ofSize: 11)
+        loginStatusLabel.textColor = .secondaryLabelColor
+        loginStatusLabel.maximumNumberOfLines = 2
+        loginStatusLabel.preferredMaxLayoutWidth = 520
+        loginButton.title = "Log in to Claude CLI…"
+        loginButton.bezelStyle = .rounded
+        loginButton.target = self
+        loginButton.action = #selector(login)
+        let checkButton = NSButton(title: "Check status", target: self, action: #selector(checkLogin))
+        checkButton.bezelStyle = .rounded
+        let loginRow = NSStackView(views: [loginButton, checkButton])
+        loginRow.orientation = .horizontal
+        loginRow.spacing = 8
+
         let stack = NSStackView(views: [
             heading,
             backendLabel, backendPopup,
             modelLabel, modelPopup,
             statusLabel, note,
+            cliHeading, loginStatusLabel, loginRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -531,6 +551,8 @@ final class SettingsSection: NSObject, MainSection {
         stack.setCustomSpacing(20, after: heading)
         stack.setCustomSpacing(16, after: backendPopup)
         stack.setCustomSpacing(20, after: modelPopup)
+        stack.setCustomSpacing(24, after: note)
+        stack.setCustomSpacing(8, after: cliHeading)
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
         container.addSubview(stack)
@@ -545,7 +567,34 @@ final class SettingsSection: NSObject, MainSection {
         return container
     }
 
-    func willAppear() { refresh() }
+    func willAppear() {
+        refresh()
+        // Cheap, synchronous: does the binary exist? Deeper check is on demand.
+        if ClaudeCLI.path() == nil {
+            loginStatusLabel.stringValue = "⚠︎ Claude CLI not found. Install Claude Code, then log in."
+            loginButton.isEnabled = false
+        } else {
+            loginStatusLabel.stringValue = "Reply drafts, chronicles, and tone learning need the Claude CLI logged in. Use “Check status” to verify."
+            loginButton.isEnabled = true
+        }
+    }
+
+    @objc private func login() {
+        loginStatusLabel.stringValue = "Opening Terminal — complete the login there, then click “Check status”."
+        ClaudeCLI.openLoginInTerminal()
+    }
+
+    @objc private func checkLogin() {
+        loginStatusLabel.stringValue = "Checking Claude login…"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let ok = ClaudeCLI.isLoggedIn()
+            DispatchQueue.main.async {
+                self?.loginStatusLabel.stringValue = ok
+                    ? "✓ Claude CLI is logged in — drafting is ready."
+                    : "⚠︎ Not logged in. Click “Log in to Claude CLI…”, finish in Terminal, then re-check."
+            }
+        }
+    }
 
     private func refresh() {
         switch config.assistBackend {

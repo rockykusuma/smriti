@@ -260,7 +260,12 @@ public final class AssistListener {
             // NO_REPLY_CONTEXT sentinel — that must never reach the field.
             let typist = StreamTypist(
                 threshold: 24,
-                sentinel: "NO_REPLY_CONTEXT",
+                sentinels: [
+                    "NO_REPLY_CONTEXT",   // model declines to reply
+                    "Not logged in",      // claude CLI not authenticated
+                    "Please run /login",  // …its follow-on line
+                    "Invalid API key",
+                ],
                 begin: { [weak self] in
                     AXUIElementSetAttributeValue(
                         focused, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -424,7 +429,7 @@ public final class AssistListener {
         enum Outcome: Equatable { case typed(Int); case declined; case cancelled(Int) }
 
         private let threshold: Int
-        private let sentinel: String
+        private let sentinels: [String]
         private let begin: () -> Void
         private let type: (String) -> Void
         private var pending = ""
@@ -433,10 +438,15 @@ public final class AssistListener {
         private var cancelled = false
         private var typedCount = 0
 
-        init(threshold: Int, sentinel: String,
+        /// `sentinels` are strings that, if they appear before typing starts,
+        /// abort insertion entirely (the model's NO_REPLY_CONTEXT decline, and
+        /// CLI error banners like "Not logged in" that must never be typed into
+        /// the user's field). `threshold` must exceed the longest sentinel so
+        /// they're always detectable while still buffered.
+        init(threshold: Int, sentinels: [String],
              begin: @escaping () -> Void, type: @escaping (String) -> Void) {
             self.threshold = threshold
-            self.sentinel = sentinel
+            self.sentinels = sentinels
             self.begin = begin
             self.type = type
         }
@@ -452,10 +462,10 @@ public final class AssistListener {
             guard !declined, !cancelled else { return }
             pending += fragment
             if !startedTyping {
-                if pending.contains(sentinel) { declined = true; pending = ""; return }
+                if sentinels.contains(where: { pending.contains($0) }) {
+                    declined = true; pending = ""; return
+                }
                 guard pending.count >= threshold else { return }
-                // Long enough to rule the sentinel out (it would have matched).
-                guard !sentinel.hasPrefix(pending.prefix(sentinel.count)) else { return }
                 begin()
                 startedTyping = true
             }
@@ -470,7 +480,7 @@ public final class AssistListener {
         func finish(fullText: String) -> Outcome {
             if cancelled { return .cancelled(typedCount) }
             let trimmed = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if declined || trimmed.contains(sentinel) || trimmed.isEmpty {
+            if declined || sentinels.contains(where: { trimmed.contains($0) }) || trimmed.isEmpty {
                 return .declined
             }
             if !startedTyping {
