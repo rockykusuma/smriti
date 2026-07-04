@@ -17,7 +17,16 @@
     device and format it binds, and warns when a recording comes out silent
     (e.g. a virtual audio device was the default input).
   - New `smriti mic-check [secs]` records a few seconds and reports the input
-    device, format, and peak/RMS level — verify capture without a real call.
+    device, format, and peak/RMS level (with a live meter) — verify capture
+    without a real call.
+  - Summary generation no longer misfires on very short transcripts (it used
+    to reply "I don't see a transcript…"); short transcripts now skip the
+    summary, and the prompt is hardened.
+  - Meeting titles fixed: no more doubled word ("Call call"), and short
+    recordings show seconds instead of rounding to "0 min".
+  - Transcription skips silent chunks (so silent tracks don't crawl),
+    transcribes short recordings in a single pass, and overlaps long-file
+    chunks so speech at a seam isn't lost.
 
 ## v0.7.1 — 2026-07-04
 
