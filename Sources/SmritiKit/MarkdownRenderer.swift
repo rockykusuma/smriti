@@ -93,7 +93,7 @@ enum MarkdownRenderer {
     private static func inline(_ text: String, base: NSFont, color: NSColor) -> NSAttributedString {
         let bold = NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask)
         let codeFont = NSFont.monospacedSystemFont(ofSize: max(11, base.pointSize - 1), weight: .regular)
-        let codeColor = NSColor.systemPink
+        let codeColor = Theme.accent
         let result = NSMutableAttributedString()
         let chars = Array(text)
         var i = 0
