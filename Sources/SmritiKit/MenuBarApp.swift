@@ -153,36 +153,13 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openMain.target = self
         menu.addItem(openMain)
 
-        let browse = NSMenuItem(
-            title: "Meetings…", action: #selector(openMeetings), keyEquivalent: "m")
-        browse.target = self
-        menu.addItem(browse)
-
-        let tone = NSMenuItem(
-            title: ToneProfile.load() == nil
-                ? "Learn my writing tone" : "Refresh my writing tone",
-            action: #selector(learnTone), keyEquivalent: "")
-        tone.target = self
-        menu.addItem(tone)
-
+        // Fire-and-forget: runs in the background with a notification, so it's
+        // worth keeping in the tray even though Home has the same button.
         let chronicle = NSMenuItem(
             title: "Write today's chronicle",
             action: #selector(chronicleToday), keyEquivalent: "")
         chronicle.target = self
         menu.addItem(chronicle)
-
-        if let latest = try? store.listChronicles(limit: 1).first {
-            let open = NSMenuItem(
-                title: "Open latest chronicle (\(latest.day))",
-                action: #selector(openLatestChronicle), keyEquivalent: "")
-            open.target = self
-            menu.addItem(open)
-        }
-
-        let prefs = NSMenuItem(
-            title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
-        prefs.target = self
-        menu.addItem(prefs)
 
         menu.addItem(.separator())
 
@@ -217,10 +194,6 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainWindow.show(section: 0)
     }
 
-    @objc private func openSettings() {
-        mainWindow.show(section: mainWindow.sectionIndex(titled: "Settings"))
-    }
-
     private func applySettings(_ updated: Config) {
         config = updated
         switch updated.assistBackend {
@@ -238,10 +211,6 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         fputs("smriti settings: assist backend=\(updated.assistBackend) model=\(updated.ollamaModel)\n", stderr)
-    }
-
-    @objc private func openMeetings() {
-        mainWindow.show(section: mainWindow.sectionIndex(titled: "Meetings"))
     }
 
     @objc private func stopMeeting() {
@@ -271,14 +240,6 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.notify(title: "Smriti", body: "Chronicle failed: \(error)")
             }
         }
-    }
-
-    @objc private func openLatestChronicle() {
-        guard let latest = try? store.listChronicles(limit: 1).first else { return }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("smriti-chronicle-\(latest.day).md")
-        try? latest.summary.write(to: url, atomically: true, encoding: .utf8)
-        NSWorkspace.shared.open(url)
     }
 
     @objc private func quit() {
