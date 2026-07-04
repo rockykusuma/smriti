@@ -189,7 +189,18 @@ public final class AssistListener {
             let anchorRect = self.caretScreenRect(focused) ?? self.elementFrameRect(focused)
             DispatchQueue.main.async { self.draftAnchor?(anchorRect) }
 
-            let draft = (self.copyAttribute(focused, kAXValueAttribute) as? String) ?? ""
+            var draft = (self.copyAttribute(focused, kAXValueAttribute) as? String) ?? ""
+            // Web/Electron fields (and some native ones) hand back their grey
+            // placeholder text as the AX value when empty. Don't mistake that
+            // for a real draft — otherwise we "continue" the placeholder (e.g.
+            // "…Please run /login") and type nonsense into an empty field.
+            let placeholder = (self.copyAttribute(focused, kAXPlaceholderValueAttribute) as? String) ?? ""
+            if !placeholder.isEmpty,
+               draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                 == placeholder.trimmingCharacters(in: .whitespacesAndNewlines) {
+                fputs("smriti assist: ignoring placeholder text as draft\n", stderr)
+                draft = ""
+            }
             let selection = (self.copyAttribute(focused, kAXSelectedTextAttribute) as? String) ?? ""
 
             // Context-sensitive action, Goldfish-style without a picker:
