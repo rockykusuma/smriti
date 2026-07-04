@@ -90,6 +90,14 @@ public final class Store {
                 VALUES ('delete', old.id, old.content, old.window_title, old.app);
             END;
             """)
+        try exec("""
+            CREATE TRIGGER IF NOT EXISTS snapshots_au AFTER UPDATE ON snapshots BEGIN
+                INSERT INTO snapshots_fts(snapshots_fts, rowid, content, window_title, app)
+                VALUES ('delete', old.id, old.content, old.window_title, old.app);
+                INSERT INTO snapshots_fts(rowid, content, window_title, app)
+                VALUES (new.id, new.content, new.window_title, new.app);
+            END;
+            """)
     }
 
     deinit { sqlite3_close(db) }
@@ -131,6 +139,22 @@ public final class Store {
         sqlite3_bind_text(stmt, 6, hash, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 7, now, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 8, now, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw StoreError.stepFailed(message: lastErrorMessage())
+        }
+    }
+
+    /// Replace a snapshot's content in place (used to fill in a meeting
+    /// transcript that was re-transcribed after the fact). FTS stays in sync
+    /// via the AFTER UPDATE trigger.
+    public func updateContent(id: Int64, content: String) throws {
+        let stmt = try prepare(
+            "UPDATE snapshots SET content = ?, content_hash = ?, last_seen_at = ? WHERE id = ?;")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, content, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, Store.sha256(content), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, Store.timestamp(), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 4, id)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw StoreError.stepFailed(message: lastErrorMessage())
         }

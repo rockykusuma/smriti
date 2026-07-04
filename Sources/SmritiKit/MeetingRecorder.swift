@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 import ScreenCaptureKit
 
@@ -19,8 +20,17 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let engine = AVAudioEngine()
     private var systemFile: AVAudioFile?
     private var micFile: AVAudioFile?
+    private var micConverter: AVAudioConverter?
+    /// Mono 16 kHz in AVAudioFile's standard (deinterleaved Float32) format —
+    /// small, recognizer-friendly, and matches the file's processing format so
+    /// buffer writes don't hit a CoreAudio conversion assert.
+    private let micTargetFormat = AVAudioFormat(
+        standardFormatWithSampleRate: 16000, channels: 1)!
     private(set) var current: Recording?
     private let sampleQueue = DispatchQueue(label: "smriti.meeting.audio")
+    /// Loudest sample seen on the mic track — used to detect a silent
+    /// recording (e.g. the input device delivered no audio).
+    private var micPeak: Float = 0
 
     var isRecording: Bool { current != nil }
 
@@ -44,11 +54,25 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             startedAt: Date(),
             appName: appName)
 
-        // Mic track (the user's side).
+        // Make sure we actually hold Microphone access — a denied grant makes
+        // AVAudioEngine deliver silent buffers rather than erroring.
+        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio)
+        if micAuth != .authorized {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                fputs("smriti meeting: microphone access \(granted ? "granted" : "DENIED — recording will be silent")\n", stderr)
+            }
+        }
+
+        // Mic track (the user's side), normalized to mono 16 kHz. The raw
+        // input node is frequently multi-channel float, which the on-device
+        // recognizer reads as silence — so convert as we capture.
+        micPeak = 0
         let micFormat = engine.inputNode.outputFormat(forBus: 0)
-        micFile = try AVAudioFile(forWriting: recording.micTrack, settings: micFormat.settings)
+        fputs("smriti meeting: mic input device '\(MeetingRecorder.defaultInputDeviceName())' — \(micFormat.channelCount) ch, \(Int(micFormat.sampleRate)) Hz\n", stderr)
+        micFile = try AVAudioFile(forWriting: recording.micTrack, settings: micTargetFormat.settings)
+        micConverter = AVAudioConverter(from: micFormat, to: micTargetFormat)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { [weak self] buffer, _ in
-            try? self?.micFile?.write(from: buffer)
+            self?.writeMic(buffer)
         }
         try engine.start()
 
@@ -93,12 +117,60 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         micFile = nil
+        micConverter = nil
         stream?.stopCapture { _ in }
         stream = nil
         systemFile = nil
         current = nil
         fputs("smriti meeting: recording stopped (\(Int(Date().timeIntervalSince(recording.startedAt)))s)\n", stderr)
+        if micPeak < 1e-5 {
+            fputs("smriti meeting: WARNING — mic track was silent (peak \(micPeak)); the input device delivered no audio. Check the mic input source and that no virtual audio device is the default input.\n", stderr)
+        }
         return recording
+    }
+
+    /// Convert one captured mic buffer to mono 16 kHz and append it.
+    private func writeMic(_ input: AVAudioPCMBuffer) {
+        guard let converter = micConverter, let file = micFile else { return }
+        let ratio = micTargetFormat.sampleRate / input.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 1024
+        guard let output = AVAudioPCMBuffer(
+            pcmFormat: micTargetFormat, frameCapacity: max(capacity, 1024)) else { return }
+        var supplied = false
+        var error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, outStatus in
+            if supplied { outStatus.pointee = .noDataNow; return nil }
+            supplied = true
+            outStatus.pointee = .haveData
+            return input
+        }
+        guard status != .error, output.frameLength > 0 else { return }
+        if let samples = output.floatChannelData?[0] {
+            var peak: Float = 0
+            for i in 0..<Int(output.frameLength) { peak = max(peak, abs(samples[i])) }
+            if peak > micPeak { micPeak = peak }
+        }
+        try? file.write(from: output)
+    }
+
+    /// Name of the current default input device, for diagnostics.
+    private static func defaultInputDeviceName() -> String {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr
+        else { return "unknown" }
+        var name: Unmanaged<CFString>?
+        var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        address.mSelector = kAudioDevicePropertyDeviceNameCFString
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &nameSize, &name) == noErr,
+              let cf = name?.takeRetainedValue()
+        else { return "unknown" }
+        return cf as String
     }
 
     // MARK: - SCStreamOutput
