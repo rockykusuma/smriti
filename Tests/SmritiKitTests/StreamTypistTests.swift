@@ -7,12 +7,12 @@ import XCTest
 final class StreamTypistTests: XCTestCase {
 
     /// Builds a typist wired to capture what it types and how often it begins.
-    private func makeTypist(threshold: Int = 5, sentinel: String = "STOP")
+    private func makeTypist(threshold: Int = 5, sentinels: [String] = ["STOP"])
         -> (AssistListener.StreamTypist, () -> String, () -> Int) {
         var typed = ""
         var beginCount = 0
         let typist = AssistListener.StreamTypist(
-            threshold: threshold, sentinel: sentinel,
+            threshold: threshold, sentinels: sentinels,
             begin: { beginCount += 1 },
             type: { typed += $0 })
         return (typist, { typed }, { beginCount })
@@ -42,6 +42,18 @@ final class StreamTypistTests: XCTestCase {
         let (t, typed, begins) = makeTypist()
         t.feed("STOP")                     // decline sentinel
         let outcome = t.finish(fullText: "STOP")
+        XCTAssertEqual(outcome, .declined)
+        XCTAssertEqual(typed(), "")
+        XCTAssertEqual(begins(), 0)
+    }
+
+    func testAuthErrorBannerIsNeverTyped() {
+        // A CLI error like "Not logged in · Please run /login" must be declined,
+        // not typed into the user's field.
+        let (t, typed, begins) = makeTypist(
+            threshold: 24, sentinels: ["NO_REPLY_CONTEXT", "Not logged in"])
+        t.feed("Not logged in · Please run /login")
+        let outcome = t.finish(fullText: "Not logged in · Please run /login")
         XCTAssertEqual(outcome, .declined)
         XCTAssertEqual(typed(), "")
         XCTAssertEqual(begins(), 0)

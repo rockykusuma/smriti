@@ -30,6 +30,36 @@ public enum ClaudeCLI {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    /// Whether the CLI is authenticated. Runs a tiny prompt and checks for the
+    /// "not logged in" banner. Costs one cheap request when logged in, so call
+    /// on demand (e.g. a Settings button), not on every view load.
+    public static func isLoggedIn() -> Bool {
+        guard path() != nil else { return false }
+        let out = ((try? run(prompt: "Reply with exactly: ok",
+                             stdin: "", extraArgs: ["--model", "haiku"])) ?? "")
+            .lowercased()
+        if out.isEmpty { return false }
+        return !out.contains("not logged in")
+            && !out.contains("please run /login")
+            && !out.contains("invalid api key")
+    }
+
+    /// Open Terminal running the CLI so the user can complete the interactive
+    /// `/login` OAuth flow (which needs a TTY and a browser round-trip).
+    @discardableResult
+    public static func openLoginInTerminal() -> Bool {
+        guard let cli = path() else { return false }
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "clear; echo 'Smriti: complete Claude login below, then type  /login  if prompted.'; '\(cli)'"
+        end tell
+        """
+        var err: NSDictionary?
+        NSAppleScript(source: script)?.executeAndReturnError(&err)
+        return err == nil
+    }
+
     /// Run `claude -p <prompt>` with `stdin` as piped context.
     /// `extraArgs` are inserted before -p (e.g. ["--model", "haiku"]).
     public static func run(
