@@ -62,6 +62,9 @@ public final class AssistListener {
     /// main thread before typing each fragment, so the typing stops at once and
     /// no cold-fallback fires. All access is main-thread → no lock needed.
     private var cancelRequested = false
+    /// The typist for the in-flight draft, so Escape can stop it at the source.
+    /// Main-thread only.
+    private var activeTypist: StreamTypist?
     private var rightOptionWasDown = false
     private var lastTapTime: TimeInterval = -1
 
@@ -148,6 +151,7 @@ public final class AssistListener {
     private func cancelGeneration() {
         guard generating, !cancelRequested else { return }
         cancelRequested = true
+        activeTypist?.cancel()
         warmClaude.cancelCurrent()
         fputs("smriti assist: cancelled by user (esc)\n", stderr)
         NSSound(named: "Funk")?.play()
@@ -254,6 +258,7 @@ public final class AssistListener {
                 },
                 type: { [weak self] text in self?.typeUnicode(text) }
             )
+            DispatchQueue.main.async { self.activeTypist = typist }
 
             var firstDeltaAt: Date?
             let deltaHandler: (String) -> Void = { fragment in
@@ -284,6 +289,7 @@ public final class AssistListener {
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.activeTypist = nil
                 // User aborted mid-flight: discard whatever came back and do
                 // NOT fall through to the cold re-run below.
                 if self.cancelRequested {
@@ -299,6 +305,8 @@ public final class AssistListener {
                     case .declined:
                         fputs("smriti assist: nothing to reply to here\n", stderr)
                         NSSound.beep()
+                    case .cancelled(let count):
+                        fputs("smriti assist: cancelled after \(count) chars\n", stderr)
                     }
                 } else {
                     // Warm process failed — cold, non-streaming fallback.
@@ -402,7 +410,7 @@ public final class AssistListener {
     /// first `threshold` characters until it's clear the reply isn't the
     /// decline sentinel. Main-thread only.
     final class StreamTypist {
-        enum Outcome { case typed(Int); case declined }
+        enum Outcome: Equatable { case typed(Int); case declined; case cancelled(Int) }
 
         private let threshold: Int
         private let sentinel: String
@@ -411,6 +419,7 @@ public final class AssistListener {
         private var pending = ""
         private var startedTyping = false
         private var declined = false
+        private var cancelled = false
         private var typedCount = 0
 
         init(threshold: Int, sentinel: String,
@@ -421,8 +430,15 @@ public final class AssistListener {
             self.type = type
         }
 
+        /// Stop accepting output: no further fragments are typed, and whatever
+        /// hasn't been typed yet is dropped. Already-typed text stays put.
+        func cancel() {
+            cancelled = true
+            pending = ""
+        }
+
         func feed(_ fragment: String) {
-            guard !declined else { return }
+            guard !declined, !cancelled else { return }
             pending += fragment
             if !startedTyping {
                 if pending.contains(sentinel) { declined = true; pending = ""; return }
@@ -441,6 +457,7 @@ public final class AssistListener {
         /// flushes anything still buffered (short replies never hit the
         /// threshold during streaming).
         func finish(fullText: String) -> Outcome {
+            if cancelled { return .cancelled(typedCount) }
             let trimmed = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
             if declined || trimmed.contains(sentinel) || trimmed.isEmpty {
                 return .declined
