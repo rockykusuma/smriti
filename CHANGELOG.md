@@ -27,6 +27,11 @@
   - Transcription skips silent chunks (so silent tracks don't crawl),
     transcribes short recordings in a single pass, and overlaps long-file
     chunks so speech at a seam isn't lost.
+  - **Mic now captured via ScreenCaptureKit** (macOS 15+) instead of
+    AVAudioEngine. VoIP apps (WhatsApp, etc.) hold the input device during a
+    call, which starved the AVAudioEngine tap — your side recorded as silence
+    while the other participant (system audio) came through fine. SCK captures
+    mic and system audio in one stream and coexists with the calling app.
 
 ## v0.7.1 — 2026-07-04
 
