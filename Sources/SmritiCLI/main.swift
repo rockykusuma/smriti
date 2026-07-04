@@ -37,6 +37,7 @@ func printUsage() {
       smriti tone                Show the stored tone profile
       smriti meetings            List recorded meeting transcripts
       smriti transcribe [id]     Re-transcribe a saved meeting's audio (default: latest)
+      smriti mic-check [secs]    Record a few seconds and report the mic level (default: 3)
       smriti retention <days>    Keep raw snapshots N days (0 = forever); chronicles always kept
       smriti prune               Prune old snapshots now (normally automatic)
       smriti menubar             Menu bar app: capture + pause/resume/exclude from the bar
@@ -215,6 +216,11 @@ do {
             fputs("smriti transcribe: \(error)\n", stderr)
             exit(1)
         }
+
+    case "mic-check":
+        let secs = args.dropFirst().first.flatMap { Double($0) } ?? 3
+        let ok = MicCheck().run(seconds: max(1, min(secs, 30)))
+        exit(ok ? 0 : 1)
 
     case "mcp":
         // stdout is the JSON-RPC channel — no prints here, only stderr.
