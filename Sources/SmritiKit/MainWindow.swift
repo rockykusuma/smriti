@@ -21,8 +21,14 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private var currentView: NSView?
 
     private lazy var sections: [MainSection] = [
-        HomeSection(store: store, owner: self),
         AskSection(store: store),
+        MasterDetailSection(title: "Chronicles", symbol: "calendar",
+                            empty: "No chronicles yet. Write one from Overview or the menu bar.",
+                            loader: { [store] in
+                                (try? store.listChronicles(limit: 200))?.map {
+                                    ($0.day, $0.summary)
+                                } ?? []
+                            }),
         MasterDetailSection(title: "Meetings", symbol: "waveform",
                             empty: "No recorded meetings yet. When a call starts, Smriti asks before recording.",
                             loader: { [store] in
@@ -30,13 +36,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
                                     ($0.windowTitle, $0.content)
                                 } ?? []
                             }),
-        MasterDetailSection(title: "Chronicles", symbol: "calendar",
-                            empty: "No chronicles yet. Write one from Home or the menu bar.",
-                            loader: { [store] in
-                                (try? store.listChronicles(limit: 200))?.map {
-                                    ($0.day, $0.summary)
-                                } ?? []
-                            }),
+        HomeSection(store: store, owner: self),
         SettingsSection(config: config, onChange: { [weak self] c in
             self?.config = c
             self?.onConfigChange(c)
@@ -323,8 +323,8 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
 // MARK: - Home
 
 final class HomeSection: NSObject, MainSection {
-    let title = "Home"
-    let symbol = "house"
+    let title = "Overview"
+    let symbol = "square.grid.2x2"
     private let store: Store
     private weak var owner: MainWindow?
     private var view: NSView?
@@ -522,6 +522,8 @@ final class SettingsSection: NSObject, MainSection {
     private let statusLabel = NSTextField(labelWithString: "")
     private let loginStatusLabel = NSTextField(labelWithString: "")
     private let loginButton = NSButton()
+    private let appearanceControl = NSSegmentedControl(
+        labels: ["System", "Light", "Dark"], trackingMode: .selectOne, target: nil, action: nil)
 
     init(config: Config, onChange: @escaping (Config) -> Void) {
         self.config = config
@@ -533,6 +535,13 @@ final class SettingsSection: NSObject, MainSection {
         let heading = NSTextField(labelWithString: "Settings")
         heading.font = Theme.serif(26, .semibold)
         heading.textColor = Theme.ink
+
+        let appearanceLabel = NSTextField(labelWithString: "Appearance")
+        appearanceLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        appearanceLabel.textColor = Theme.ink
+        appearanceControl.selectedSegment = ["system", "light", "dark"].firstIndex(of: config.appearanceMode) ?? 0
+        appearanceControl.target = self
+        appearanceControl.action = #selector(changedAppearance)
 
         let backendLabel = NSTextField(labelWithString: "Reply drafts by")
         backendLabel.font = .systemFont(ofSize: 13, weight: .medium)
@@ -578,6 +587,7 @@ final class SettingsSection: NSObject, MainSection {
 
         let stack = NSStackView(views: [
             heading,
+            appearanceLabel, appearanceControl,
             backendLabel, backendPopup,
             modelLabel, modelPopup,
             statusLabel, note,
@@ -588,6 +598,7 @@ final class SettingsSection: NSObject, MainSection {
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.setCustomSpacing(20, after: heading)
+        stack.setCustomSpacing(20, after: appearanceControl)
         stack.setCustomSpacing(16, after: backendPopup)
         stack.setCustomSpacing(20, after: modelPopup)
         stack.setCustomSpacing(24, after: note)
@@ -620,6 +631,13 @@ final class SettingsSection: NSObject, MainSection {
     @objc private func login() {
         loginStatusLabel.stringValue = "Opening Terminal — complete the login there, then click “Check status”."
         ClaudeCLI.openLoginInTerminal()
+    }
+
+    @objc private func changedAppearance() {
+        config.appearanceMode = ["system", "light", "dark"][max(0, appearanceControl.selectedSegment)]
+        try? config.save()
+        Theme.applyAppearance(config.appearanceMode)
+        onChange(config)
     }
 
     @objc private func checkLogin() {

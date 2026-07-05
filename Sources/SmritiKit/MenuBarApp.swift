@@ -44,6 +44,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        Theme.applyAppearance(config.appearanceMode)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = NSImage(
