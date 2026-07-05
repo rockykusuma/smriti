@@ -72,8 +72,17 @@ enum Theme {
 
     /// Follow the system appearance (no forced light/dark) with a themed bg.
     static func style(window: NSWindow, background: NSColor = surface) {
-        window.appearance = nil
         window.backgroundColor = background
+    }
+
+    /// Force the whole app's appearance: "light", "dark", or "system" (follow
+    /// macOS). Applied app-wide so every window and panel flips together.
+    static func applyAppearance(_ mode: String) {
+        switch mode {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: NSApp.appearance = nil
+        }
     }
 }
 

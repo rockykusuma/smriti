@@ -25,6 +25,8 @@ public struct Config: Codable {
     public var assistBackend: String = "auto"
     /// Local model for the assist when Ollama is used.
     public var ollamaModel: String = "llama3.2:latest"
+    /// App appearance: "system" (follow macOS), "light", or "dark".
+    public var appearanceMode: String = "system"
 
     public var databasePath: String {
         Config.supportDirectory.appendingPathComponent("smriti.sqlite").path
@@ -79,6 +81,7 @@ public struct Config: Codable {
             partial.retentionDays.map { config.retentionDays = $0 }
             partial.assistBackend.map { config.assistBackend = $0 }
             partial.ollamaModel.map { config.ollamaModel = $0 }
+            partial.appearanceMode.map { config.appearanceMode = $0 }
             try config.save() // rewrite with full key set
             return config
         }
@@ -94,6 +97,7 @@ public struct Config: Codable {
         var retentionDays: Int?
         var assistBackend: String?
         var ollamaModel: String?
+        var appearanceMode: String?
     }
 
     public func save() throws {
