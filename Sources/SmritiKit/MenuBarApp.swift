@@ -85,6 +85,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         meetings = MeetingWatcher(store: store)
         meetings.contextHint = { [weak self] in self?.daemon.lastWindowCapture?.capture }
+        meetings.voiceNoteActive = { [weak self] in self?.voiceRecorder.isRecording ?? false }
         meetings.start()
         // Speech Recognition authorization is a TCC request that aborts unsigned
         // dev builds (same class of crash as the mic check), and it's only
