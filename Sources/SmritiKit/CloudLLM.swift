@@ -28,9 +28,17 @@ public struct CloudProviderConfig: Codable, Equatable {
 // MARK: - Keychain storage for API keys
 
 /// API keys live in the login Keychain, never in config.json — config is a
-/// plain-text file users share in bug reports.
+/// plain-text file users share in bug reports. For people who prefer a file,
+/// two fallbacks are read (in order, after the Keychain): a
+/// `<PROVIDER>_API_KEY` environment variable, and the same line in
+/// `~/Library/Application Support/Smriti/.env` — deliberately outside any
+/// git repo so it can't be committed by accident.
 public enum CloudKeyStore {
     static let service = "com.smriti.cli.cloud"
+
+    public static var envFileURL: URL {
+        Config.supportDirectory.appendingPathComponent(".env")
+    }
 
     @discardableResult
     public static func set(_ key: String, provider: String) -> Bool {
@@ -45,6 +53,21 @@ public enum CloudKeyStore {
     }
 
     public static func get(provider: String) -> String? {
+        keychainGet(provider: provider)
+            ?? environmentKey(provider: provider)
+            ?? envFileKey(provider: provider)
+    }
+
+    /// Where the key for `provider` comes from: "keychain", "environment",
+    /// ".env", or nil when there is none. For status displays.
+    public static func source(provider: String) -> String? {
+        if keychainGet(provider: provider) != nil { return "keychain" }
+        if environmentKey(provider: provider) != nil { return "environment" }
+        if envFileKey(provider: provider) != nil { return ".env" }
+        return nil
+    }
+
+    private static func keychainGet(provider: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -56,6 +79,44 @@ public enum CloudKeyStore {
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    /// "GROQ_API_KEY" for provider "groq" (non-alphanumerics become "_").
+    static func envVarName(provider: String) -> String {
+        provider.uppercased().map { $0.isLetter || $0.isNumber ? $0 : "_" }
+            .map(String.init).joined() + "_API_KEY"
+    }
+
+    private static func environmentKey(provider: String) -> String? {
+        let value = ProcessInfo.processInfo.environment[envVarName(provider: provider)]
+        return (value?.isEmpty ?? true) ? nil : value
+    }
+
+    private static func envFileKey(provider: String) -> String? {
+        guard let text = try? String(contentsOf: envFileURL, encoding: .utf8)
+        else { return nil }
+        return parseEnv(text)[envVarName(provider: provider)]
+    }
+
+    /// Minimal dotenv parsing: KEY=VALUE lines, '#' comments, optional
+    /// single/double quotes around the value, optional "export " prefix.
+    static func parseEnv(_ text: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            if line.hasPrefix("export ") { line = String(line.dropFirst(7)) }
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
+            var value = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2,
+               (value.hasPrefix("\"") && value.hasSuffix("\""))
+                || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                value = String(value.dropFirst().dropLast())
+            }
+            if !key.isEmpty, !value.isEmpty { result[key] = value }
+        }
+        return result
     }
 
     @discardableResult
