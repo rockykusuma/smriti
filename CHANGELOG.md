@@ -23,7 +23,10 @@
   end of a note (never at startup), and if it's unavailable the audio is still
   saved with a note. Disabled only on unsigned dev builds. The meeting watcher
   ignores the mic while a voice note is recording, so it doesn't mistake a note
-  for a call and prompt for consent.
+  for a call and prompt for consent. While recording, the Meetings pane shows a
+  live visualizer — a scrolling audio-level meter, a running timer, and a
+  pulsing record indicator — then a "Transcribing..." state until the note is
+  saved.
 
 - **`smriti meeting-selftest [secs]`** — exercises the real ScreenCaptureKit
   dual-track recorder (system audio + mic) for a few seconds without needing a
