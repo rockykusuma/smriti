@@ -46,6 +46,7 @@ func printUsage() {
       smriti cloud-add <name> <url> <m>  Add/update an OpenAI-compatible provider (base URL + model)
       smriti cloud-remove <name>         Remove a custom provider (presets reset instead)
       smriti cloud-models [provider]     List model ids offered by a provider's API
+      smriti cloud-test [provider]       Send a test prompt; report first-token and total latency
       smriti retention <days>    Keep raw snapshots N days (0 = forever); chronicles always kept
       smriti prune               Prune old snapshots now (normally automatic)
       smriti menubar             Menu bar app: capture + pause/resume/exclude from the bar
@@ -261,6 +262,34 @@ do {
             print("No models returned — is the API key set and the endpoint reachable? (smriti key set \(provider) <key>)")
         } else {
             for id in models { print(id + (id == p.model ? "   ← current" : "")) }
+        }
+
+    case "cloud-test":
+        let provider = (args.dropFirst().first ?? config.cloudProvider).lowercased()
+        guard let p = config.cloudProviders[provider] else {
+            fputs("smriti: unknown provider '\(provider)'\n", stderr); exit(1)
+        }
+        let key = CloudKeyStore.get(provider: provider)
+        guard key != nil || p.isLocal else {
+            fputs("smriti: no API key for \(provider). Run: smriti key set \(provider) <key>\n", stderr)
+            exit(1)
+        }
+        print("Testing \(provider)/\(p.model) …")
+        let spec = CloudLLMClient.Spec(name: provider, config: p, apiKey: key)
+        let started = Date()
+        var firstToken: TimeInterval?
+        let reply = CloudLLMClient(spec: spec).request(
+            "Reply with one short sentence confirming you can hear me.",
+            timeout: 30) { _ in
+            if firstToken == nil { firstToken = Date().timeIntervalSince(started) }
+        }
+        if let reply {
+            let total = Date().timeIntervalSince(started)
+            print("reply: \(reply.trimmingCharacters(in: .whitespacesAndNewlines))")
+            print(String(format: "first token: %.2fs · total: %.2fs", firstToken ?? total, total))
+        } else {
+            print("FAILED — see the error above. Check the key, model id, and network.")
+            exit(1)
         }
 
     case "retention":
