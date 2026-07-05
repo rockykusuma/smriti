@@ -17,7 +17,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     private var window: NSWindow?
     private let sidebar = NSTableView()
-    private let contentContainer = NSView()
+    private let contentContainer = ThemedView(frame: .zero)
     private var currentView: NSView?
 
     private lazy var sections: [MainSection] = [
@@ -76,9 +76,8 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         Theme.style(window: win, background: Theme.sidebar)
         win.titlebarAppearsTransparent = true
 
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 620))
-        root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.sidebar.cgColor
+        let root = ThemedView(frame: NSRect(x: 0, y: 0, width: 940, height: 620))
+        root.fillColor = Theme.sidebar
 
         // Sidebar
         sidebar.style = .sourceList
@@ -115,8 +114,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         // Content
         contentContainer.frame = NSRect(x: 201, y: 0, width: 739, height: 620)
         contentContainer.autoresizingMask = [.width, .height]
-        contentContainer.wantsLayer = true
-        contentContainer.layer?.backgroundColor = Theme.surface.cgColor
+        contentContainer.fillColor = Theme.surface
 
         let divider = NSBox(frame: NSRect(x: 200, y: 0, width: 1, height: 620))
         divider.boxType = .custom
@@ -453,14 +451,11 @@ final class HomeSection: NSObject, MainSection {
     }
 
     private func actionButton(_ title: String, _ symbol: String, _ action: Selector) -> NSButton {
-        let b = NSButton(title: "", target: self, action: action)
+        let b = ThemedButton(title: "", target: self, action: action)
         b.isBordered = false
-        b.wantsLayer = true
-        b.layer?.backgroundColor = Theme.card.cgColor
-        b.layer?.borderColor = Theme.border.cgColor
-        b.layer?.borderWidth = 1
-        b.layer?.cornerRadius = 12
-        b.layer?.cornerCurve = .continuous
+        b.fillColor = Theme.card
+        b.strokeColor = Theme.border
+        b.corner = 12
         b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
         b.imagePosition = .imageLeading
@@ -487,7 +482,9 @@ final class HomeSection: NSObject, MainSection {
 
     private func refresh() {
         let paused = owner?.isPaused() ?? false
-        dot.layer?.backgroundColor = (paused ? Theme.statusOff : Theme.statusOn).cgColor
+        dot.effectiveAppearance.performAsCurrentDrawingAppearance {
+            dot.layer?.backgroundColor = (paused ? Theme.statusOff : Theme.statusOn).cgColor
+        }
         statusText.stringValue = paused ? "Paused" : "Capturing"
         statusCaption.stringValue = paused
             ? "Screen capture is paused."
