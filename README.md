@@ -139,6 +139,8 @@ Config keys in `config.json` (API keys are **never** stored there):
 | `ollamaModel` | any installed Ollama model tag | `llama3.2:latest` |
 | `cloudProvider` | a name from `cloudProviders` | `groq` |
 | `cloudProviders` | map of `{name: {baseURL, model}}` — presets: `groq`, `openrouter` | — |
+| `redactRemoteEgress` | scrub secrets/PII from the prompt before it leaves the machine (cloud **and** Claude; localhost Ollama exempt) | `true` |
+| `cloudExcludedBundleIds` | apps whose reply drafts must stay on local models | `[]` |
 
 **Local replies:** install [Ollama](https://ollama.com) and pull a small
 instruct model:
@@ -149,7 +151,9 @@ ollama pull llama3.2      # fast; great for short replies
 
 **Cloud replies (opt-in, bring your own key):** create a free key at
 [console.groq.com](https://console.groq.com) (note: Groq the inference
-company, not Grok the xAI model — free tier, no card needed), then:
+company, not Grok the xAI model — free tier, no card needed). Then add it
+either from the app — **Settings → API key**, paste and Save (stored in the
+login Keychain) — or from the Terminal:
 
 ```bash
 smriti key set groq gsk_your_key_here   # stored in the login Keychain
@@ -176,6 +180,24 @@ the window you're replying in, up to three related memory snippets, and your
 tone profile — nothing else. Capture exclusions apply long before any of
 this exists, and your raw history never leaves the machine. No key, no cloud:
 without a stored key Smriti behaves exactly as before.
+
+Two extra gates guard that egress:
+
+- **Redaction on every remote lane.** Before the prompt leaves the machine —
+  whether it's going to a cloud provider *or* to Claude — Smriti scrubs secrets
+  and personal identifiers: API keys and tokens, JWTs, private-key blocks,
+  `password:`/`secret:` assignments, emails, Luhn-valid card numbers, SSNs, and
+  phone numbers, each replaced with a `[REDACTED_…]` placeholder. Only a truly
+  local lane (a localhost Ollama, or a cloud provider you've pointed at
+  localhost) gets the raw text. On by default (`redactRemoteEgress`); toggle it
+  in **Settings → Privacy**. Preview exactly what would be sent with
+  `smriti redact "some text with a sk-… key"` (reads stdin if you give no
+  argument).
+- **Per-app cloud opt-out.** `smriti cloud-exclude <bundleId>` keeps a given
+  app's reply drafts off the third-party cloud provider entirely — they fall
+  through to a local model, or to Claude with redaction applied.
+  `smriti cloud-include` undoes it; `smriti exclusions` lists both these and the
+  capture exclusions.
 
 Smriti keeps the chosen Ollama model resident so there's no cold-start cost.
 Switch backend, provider, and model live from the menu bar → **Settings…**

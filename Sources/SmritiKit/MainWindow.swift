@@ -14,11 +14,23 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
     var writeChronicleNow: () -> Void = {}
     var learnToneNow: () -> Void = {}
     var onConfigChange: (Config) -> Void = { _ in }
+    var startVoiceNote: () -> Void = {}
+    var stopVoiceNote: () -> Void = {}
+    var isRecordingVoiceNote: () -> Bool = { false }
 
     private var window: NSWindow?
     private let sidebar = NSTableView()
     private let contentContainer = ThemedView(frame: .zero)
     private var currentView: NSView?
+
+    private lazy var meetingsSection = MasterDetailSection(
+        title: "Meetings", symbol: "waveform",
+        empty: "No recordings yet. Click “Record voice note” above to capture and transcribe one, or Smriti will ask before recording a call.",
+        loader: { [store] in
+            (try? store.listMeetings(limit: 200))?.map {
+                ($0.windowTitle, $0.content)
+            } ?? []
+        })
 
     private lazy var sections: [MainSection] = [
         AskSection(store: store),
@@ -29,13 +41,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
                                     ($0.day, $0.summary)
                                 } ?? []
                             }),
-        MasterDetailSection(title: "Meetings", symbol: "waveform",
-                            empty: "No recorded meetings yet. When a call starts, Smriti asks before recording.",
-                            loader: { [store] in
-                                (try? store.listMeetings(limit: 200))?.map {
-                                    ($0.windowTitle, $0.content)
-                                } ?? []
-                            }),
+        meetingsSection,
         HomeSection(store: store, owner: self),
         SettingsSection(config: config, onChange: { [weak self] c in
             self?.config = c
@@ -43,10 +49,20 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         }),
     ]
 
+    /// Re-read the meetings list (after a voice note finishes transcribing).
+    func reloadMeetings() { meetingsSection.reloadRows() }
+
     public init(store: Store, config: Config) {
         self.store = store
         self.config = config
         super.init()
+        meetingsSection.recordControls = MasterDetailSection.RecordControls(
+            enabled: MeetingWatcher.voiceNotesEnabled,
+            isActive: { [weak self] in self?.isRecordingVoiceNote() ?? false },
+            toggle: { [weak self] in
+                guard let self else { return }
+                if self.isRecordingVoiceNote() { self.stopVoiceNote() } else { self.startVoiceNote() }
+            })
     }
 
     /// Open the window on a given section (0 = Home).
@@ -217,6 +233,20 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
     private var rows: [(title: String, body: String)] = []
     private var view: NSView?
 
+    /// Optional record bar shown above the list (used by Meetings for manual
+    /// voice notes). `isActive`/`toggle` drive a single Start/Stop button.
+    struct RecordControls {
+        let enabled: Bool
+        let isActive: () -> Bool
+        let toggle: () -> Void
+    }
+    var recordControls: RecordControls?
+    private let recordButton = NSButton()
+    private let recordStatus = NSTextField(labelWithString: "")
+    private var elapsedTimer: Timer?
+    private var recordStartedAt: Date?
+    private static let headerHeight: CGFloat = 48
+
     init(title: String, symbol: String, empty: String, loader: @escaping () -> [(String, String)]) {
         self.title = title
         self.symbol = symbol
@@ -228,7 +258,26 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         if let view { return view }
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
 
-        let split = NSSplitView(frame: container.bounds)
+        let hasHeader = recordControls != nil
+        if hasHeader {
+            let h = MasterDetailSection.headerHeight
+            recordButton.bezelStyle = .rounded
+            recordButton.controlSize = .large
+            recordButton.target = self
+            recordButton.action = #selector(toggleRecord)
+            recordButton.frame = NSRect(x: 12, y: 620 - h + 10, width: 190, height: 28)
+            recordButton.autoresizingMask = [.minYMargin]
+            recordStatus.font = .systemFont(ofSize: 11)
+            recordStatus.textColor = .secondaryLabelColor
+            recordStatus.lineBreakMode = .byTruncatingTail
+            recordStatus.frame = NSRect(x: 212, y: 620 - h + 15, width: 515, height: 18)
+            recordStatus.autoresizingMask = [.minYMargin, .width]
+            container.addSubview(recordButton)
+            container.addSubview(recordStatus)
+        }
+        let splitHeight: CGFloat = hasHeader ? 620 - MasterDetailSection.headerHeight : 620
+
+        let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: 739, height: splitHeight))
         split.isVertical = true
         split.dividerStyle = .thin
         split.autoresizingMask = [.width, .height]
@@ -261,6 +310,12 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
     }
 
     func willAppear() {
+        reloadRows()
+    }
+
+    /// Reload the list from the loader and refresh the record button. Public so
+    /// the owner can call it after an async voice note finishes transcribing.
+    func reloadRows() {
         rows = loader()
         table.reloadData()
         if !rows.isEmpty {
@@ -268,6 +323,43 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         } else {
             text.string = emptyMessage
         }
+        updateRecordUI()
+    }
+
+    @objc private func toggleRecord() {
+        guard let rc = recordControls else { return }
+        if !rc.isActive() { recordStartedAt = Date() }
+        rc.toggle()
+        updateRecordUI()
+    }
+
+    private func updateRecordUI() {
+        guard let rc = recordControls else { return }
+        recordButton.isEnabled = rc.enabled
+        if rc.isActive() {
+            recordButton.title = "◼ Stop & save"
+            recordStartedAt = recordStartedAt ?? Date()
+            recordStatus.stringValue = elapsedLabel()
+            if elapsedTimer == nil {
+                elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                    self?.recordStatus.stringValue = self?.elapsedLabel() ?? ""
+                }
+            }
+        } else {
+            recordButton.title = "● Record voice note"
+            elapsedTimer?.invalidate()
+            elapsedTimer = nil
+            recordStartedAt = nil
+            recordStatus.stringValue = rc.enabled
+                ? "Talk, then Stop — transcribed on-device and saved below."
+                : "Available in the installed app (needs Microphone + Speech Recognition)."
+        }
+    }
+
+    private func elapsedLabel() -> String {
+        let secs = Int(Date().timeIntervalSince(recordStartedAt ?? Date()))
+        return String(format: "Recording… %d:%02d — speak now, then click Stop to transcribe & save.",
+                      secs / 60, secs % 60)
     }
 
     static func makeTextScroll(_ text: NSTextView, frame: NSRect) -> NSScrollView {
@@ -522,6 +614,12 @@ final class SettingsSection: NSObject, MainSection {
     private let providerLabel = NSTextField(labelWithString: "Cloud provider")
     private let modelLabel = NSTextField(labelWithString: "Model")
     private let modelPopup = NSPopUpButton()
+    private let apiKeyLabel = NSTextField(labelWithString: "API key")
+    private let apiKeyField = NSSecureTextField()
+    private let apiKeySaveButton = NSButton()
+    private let apiKeyStatusLabel = NSTextField(labelWithString: "")
+    private var apiKeyRow: NSStackView?
+    private let redactCheckbox = NSButton()
     private let statusLabel = NSTextField(labelWithString: "")
     private let loginStatusLabel = NSTextField(labelWithString: "")
     private let loginButton = NSButton()
@@ -565,6 +663,45 @@ final class SettingsSection: NSObject, MainSection {
         modelPopup.target = self
         modelPopup.action = #selector(changed)
 
+        // API key entry — store the active provider's key in the login
+        // Keychain without leaving the app.
+        apiKeyLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        apiKeyField.placeholderString = "Paste API key (e.g. gsk_… for Groq)"
+        apiKeyField.target = self
+        apiKeyField.action = #selector(saveKey) // Return in the field saves
+        apiKeySaveButton.title = "Save key"
+        apiKeySaveButton.bezelStyle = .rounded
+        apiKeySaveButton.target = self
+        apiKeySaveButton.action = #selector(saveKey)
+        let apiKeyRemoveButton = NSButton(
+            title: "Remove", target: self, action: #selector(removeKey))
+        apiKeyRemoveButton.bezelStyle = .rounded
+        let keyRow = NSStackView(views: [apiKeyField, apiKeySaveButton, apiKeyRemoveButton])
+        keyRow.orientation = .horizontal
+        keyRow.spacing = 8
+        apiKeyRow = keyRow
+        apiKeyStatusLabel.font = .systemFont(ofSize: 11)
+        apiKeyStatusLabel.textColor = .secondaryLabelColor
+        apiKeyStatusLabel.maximumNumberOfLines = 2
+        apiKeyStatusLabel.preferredMaxLayoutWidth = 520
+
+        // Privacy: redact secrets/PII before anything leaves the machine.
+        let privacyHeading = NSTextField(labelWithString: "Privacy")
+        privacyHeading.font = .systemFont(ofSize: 13, weight: .medium)
+        privacyHeading.textColor = Theme.ink
+        redactCheckbox.setButtonType(.switch)
+        redactCheckbox.title = "Redact secrets & personal info before sending to any remote model"
+        redactCheckbox.target = self
+        redactCheckbox.action = #selector(toggledRedaction)
+        redactCheckbox.state = config.redactRemoteEgress ? .on : .off
+        let redactNote = NSTextField(wrappingLabelWithString:
+            "Applies to cloud providers and Claude. API keys, tokens, private keys, "
+            + "emails, card numbers and the like become [REDACTED_…] placeholders. "
+            + "A local Ollama always receives the full text.")
+        redactNote.font = .systemFont(ofSize: 11)
+        redactNote.textColor = .tertiaryLabelColor
+        redactNote.preferredMaxLayoutWidth = 520
+
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.maximumNumberOfLines = 3
@@ -599,8 +736,10 @@ final class SettingsSection: NSObject, MainSection {
             appearanceLabel, appearanceControl,
             backendLabel, backendPopup,
             providerLabel, providerPopup,
+            apiKeyLabel, keyRow, apiKeyStatusLabel,
             modelLabel, modelPopup,
             statusLabel, note,
+            privacyHeading, redactCheckbox, redactNote,
             cliHeading, loginStatusLabel, loginRow,
         ])
         stack.orientation = .vertical
@@ -610,8 +749,11 @@ final class SettingsSection: NSObject, MainSection {
         stack.setCustomSpacing(20, after: heading)
         stack.setCustomSpacing(20, after: appearanceControl)
         stack.setCustomSpacing(16, after: backendPopup)
+        stack.setCustomSpacing(12, after: apiKeyStatusLabel)
         stack.setCustomSpacing(20, after: modelPopup)
         stack.setCustomSpacing(24, after: note)
+        stack.setCustomSpacing(8, after: privacyHeading)
+        stack.setCustomSpacing(24, after: redactNote)
         stack.setCustomSpacing(8, after: cliHeading)
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
@@ -623,6 +765,7 @@ final class SettingsSection: NSObject, MainSection {
             backendPopup.widthAnchor.constraint(equalToConstant: 300),
             providerPopup.widthAnchor.constraint(equalToConstant: 300),
             modelPopup.widthAnchor.constraint(equalToConstant: 300),
+            apiKeyField.widthAnchor.constraint(equalToConstant: 220),
         ])
         view = container
         return container
@@ -680,6 +823,7 @@ final class SettingsSection: NSObject, MainSection {
     private func refresh() {
         backendPopup.selectItem(
             at: SettingsSection.backendKeys.firstIndex(of: config.assistBackend) ?? 0)
+        redactCheckbox.state = config.redactRemoteEgress ? .on : .off
 
         let cloudVisible = config.assistBackend == "cloud" || config.assistBackend == "auto"
         providerLabel.isHidden = !cloudVisible
@@ -687,6 +831,22 @@ final class SettingsSection: NSObject, MainSection {
         providerPopup.removeAllItems()
         providerPopup.addItems(withTitles: config.cloudProviders.keys.sorted())
         providerPopup.selectItem(withTitle: config.cloudProvider)
+
+        // API key entry follows the provider; hidden unless a cloud lane is in
+        // play and the provider actually needs a key (localhost endpoints don't).
+        let provider = config.cloudProviders[config.cloudProvider]
+        let needsKey = cloudVisible && !(provider?.isLocal ?? false)
+        apiKeyLabel.isHidden = !needsKey
+        apiKeyRow?.isHidden = !needsKey
+        apiKeyStatusLabel.isHidden = !needsKey
+        if needsKey {
+            apiKeyLabel.stringValue = "API key for \(config.cloudProvider)"
+            if let source = CloudKeyStore.source(provider: config.cloudProvider) {
+                apiKeyStatusLabel.stringValue = "✓ Key in place (from \(source)). Paste a new one and Save to replace it."
+            } else {
+                apiKeyStatusLabel.stringValue = "No key yet — free Groq keys at console.groq.com. Paste above and Save."
+            }
+        }
 
         if showsCloudModels {
             refreshCloudModels()
@@ -723,7 +883,7 @@ final class SettingsSection: NSObject, MainSection {
         modelPopup.isEnabled = true
 
         guard CloudKeyStore.hasKey(provider: providerName) || provider.isLocal else {
-            statusLabel.stringValue = "No API key for \(providerName). Add one in Terminal: smriti key set \(providerName) <key> — free keys at console.groq.com."
+            statusLabel.stringValue = "No API key for \(providerName) yet. Paste one in the “API key” field above and click Save."
             return
         }
         statusLabel.stringValue = "\(providerName) key found. Drafts use \(provider.model); only the window text of the moment is sent, exclusions always apply."
@@ -764,6 +924,44 @@ final class SettingsSection: NSObject, MainSection {
         }
         try? config.save()
         refresh()
+        onChange(config)
+    }
+
+    @objc private func saveKey() {
+        let key = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            apiKeyStatusLabel.stringValue = "Paste a key first, then Save."
+            return
+        }
+        let providerName = config.cloudProvider
+        if CloudKeyStore.set(key, provider: providerName) {
+            apiKeyField.stringValue = "" // never keep the secret on screen
+            apiKeyStatusLabel.stringValue = "✓ Saved \(providerName) key to the login Keychain."
+            refresh()      // re-list models now that the key exists
+            onChange(config) // re-wire backends so the cloud lane goes live
+        } else {
+            apiKeyStatusLabel.stringValue = "⚠︎ Couldn't save to the Keychain — try again."
+        }
+    }
+
+    @objc private func removeKey() {
+        let providerName = config.cloudProvider
+        CloudKeyStore.remove(provider: providerName)
+        apiKeyField.stringValue = ""
+        // A key can also live in an env var or .env; the Keychain copy is gone
+        // but note if another source still supplies one.
+        if let source = CloudKeyStore.source(provider: providerName) {
+            apiKeyStatusLabel.stringValue = "Removed the Keychain key. A key is still provided by \(source)."
+        } else {
+            apiKeyStatusLabel.stringValue = "Removed the \(providerName) key."
+        }
+        refresh()
+        onChange(config)
+    }
+
+    @objc private func toggledRedaction() {
+        config.redactRemoteEgress = (redactCheckbox.state == .on)
+        try? config.save()
         onChange(config)
     }
 }

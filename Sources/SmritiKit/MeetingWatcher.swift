@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import CoreAudio
 import Foundation
 
@@ -41,7 +42,69 @@ public final class MeetingWatcher {
         self.store = store
     }
 
+    /// Whether the meeting features (mic-activity watching *and* speech
+    /// recognition) should run. Both go through TCC checks — Microphone and
+    /// Speech Recognition — that *abort the whole process* on a build that
+    /// can't satisfy them, as with an ad-hoc-signed `swift run` binary under
+    /// `.build/`. So they're off for dev builds and when `SMRITI_NO_MEETINGS=1`;
+    /// force them on with `SMRITI_MEETINGS=1`. The installed/signed binary
+    /// (in /usr/local/bin or an .app bundle) runs them normally.
+    public static var meetingFeaturesEnabled: Bool {
+        let env = ProcessInfo.processInfo.environment
+        if env["SMRITI_NO_MEETINGS"] == "1" { return false }
+        if env["SMRITI_MEETINGS"] == "1" { return true }
+        return !isUnsignedDevBuild
+    }
+
+    /// An ad-hoc-signed build running out of the SwiftPM/Xcode build dir — it
+    /// can't hold Microphone/Speech TCC grants, so the mic poll and Speech auth
+    /// abort there.
+    public static var isUnsignedDevBuild: Bool {
+        let path = Bundle.main.executablePath ?? CommandLine.arguments.first ?? ""
+        return path.contains("/.build/") || path.contains("/DerivedData/")
+    }
+
+    /// Manual voice notes only need the microphone (AVAudioEngine) plus Speech
+    /// requested on demand — they don't use the crash-prone CoreAudio
+    /// call-detection poll. So they stay available even when the meeting watcher
+    /// is disabled (e.g. SMRITI_NO_MEETINGS), just not on unsigned dev builds.
+    public static var voiceNotesEnabled: Bool { !isUnsignedDevBuild }
+
     public func start() {
+        guard MeetingWatcher.meetingFeaturesEnabled else {
+            let path = Bundle.main.executablePath ?? ""
+            fputs("smriti meetings: disabled (dev build or SMRITI_NO_MEETINGS at \(path)) — avoids Microphone/Speech TCC aborts on unsigned builds.\n", stderr)
+            return
+        }
+
+        // The mic-activity poll reads a CoreAudio property that is TCC-gated on
+        // modern macOS. Gate on the mic authorization status first — reading the
+        // status never prompts or crashes — and only start polling once
+        // authorized, requesting access via the sanctioned prompt when
+        // undetermined.
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            beginPolling()
+        case .notDetermined:
+            // Ask once via the sanctioned API — this shows the system prompt on
+            // a properly signed/installed build (which carries the embedded
+            // usage string), and simply returns a denial on a build that can't,
+            // instead of crashing.
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.beginPolling()
+                    } else {
+                        fputs("smriti meetings: mic access not granted — watcher idle\n", stderr)
+                    }
+                }
+            }
+        default:
+            fputs("smriti meetings: mic access denied — watcher idle (enable Microphone in System Settings to record meetings)\n", stderr)
+        }
+    }
+
+    private func beginPolling() {
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.poll()
         }

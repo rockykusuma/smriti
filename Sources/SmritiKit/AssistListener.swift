@@ -56,6 +56,15 @@ public final class AssistListener {
     /// When set, the assist tries this local Ollama model (after the cloud
     /// lane, if any) and falls back to the warm Claude process on failure.
     var ollamaModel: String?
+    /// Bundle ids whose window text must never reach the cloud lane. A draft
+    /// triggered in one of these apps skips the cloud provider entirely and
+    /// uses only local models (Ollama / the user's own Claude).
+    var cloudExcludedBundleIds: Set<String> = []
+    /// Scrub secrets and personal identifiers out of the prompt before it
+    /// leaves the machine. On by default. Applies to every non-local lane — a
+    /// cloud provider (Groq/OpenRouter/…) and Claude — while local lanes (a
+    /// localhost Ollama) always receive the raw, unredacted prompt.
+    var redactRemoteEgress = true
 
     private var pollTimer: Timer?
     private let warmClaude = WarmClaude()
@@ -293,16 +302,38 @@ public final class AssistListener {
 
             var raw: String?
             var backend = "claude"
-            if let spec = self.cloudSpec {
+            // Redact once for any lane whose destination leaves the machine.
+            // Local lanes (a localhost Ollama) get the raw text; every remote
+            // lane — a non-localhost cloud provider and Claude — gets this
+            // scrubbed copy.
+            let remotePrompt: String = {
+                guard self.redactRemoteEgress else { return fullPrompt }
+                let scrub = Redactor.redact(fullPrompt)
+                if scrub.count > 0 {
+                    fputs("smriti assist: redacted \(scrub.count) sensitive value(s) before remote egress\n", stderr)
+                }
+                return scrub.text
+            }()
+            // The cloud provider lane is opt-in per app: text from a
+            // cloud-excluded app never goes to the third-party provider (it
+            // falls through to a local model, or to Claude with redaction).
+            let cloudBlocked = self.cloudExcludedBundleIds.contains(capture.bundleId)
+            if let spec = self.cloudSpec, !cloudBlocked {
+                // A cloud provider pointed at localhost (a local llama.cpp/LM
+                // Studio) is itself local — send it the raw text.
+                let egress = spec.config.isLocal ? fullPrompt : remotePrompt
                 backend = "\(spec.name)/\(spec.config.model)"
-                raw = CloudLLMClient(spec: spec).request(fullPrompt, onDelta: deltaHandler)
+                raw = CloudLLMClient(spec: spec).request(egress, onDelta: deltaHandler)
                 if raw == nil {
                     fputs("smriti assist: \(spec.name) failed, falling back\n", stderr)
                 }
+            } else if self.cloudSpec != nil, cloudBlocked {
+                fputs("smriti assist: \(capture.appName) is cloud-excluded — skipping cloud provider\n", stderr)
             }
             if raw == nil, firstDeltaAt == nil, // don't mix streams mid-typing
                let model = self.ollamaModel {
                 backend = "ollama/\(model)"
+                // Local (localhost:11434) — full text, no redaction needed.
                 raw = OllamaClient(model: model).request(fullPrompt, onDelta: deltaHandler)
                 if raw == nil {
                     fputs("smriti assist: ollama failed, falling back to claude\n", stderr)
@@ -310,7 +341,7 @@ public final class AssistListener {
             }
             if raw == nil, firstDeltaAt == nil {
                 if backend != "claude" { backend = "claude (fallback)" }
-                raw = self.warmClaude.request(fullPrompt, onDelta: deltaHandler)
+                raw = self.warmClaude.request(remotePrompt, onDelta: deltaHandler)
             }
             fputs("smriti assist: backend=\(backend)\n", stderr)
 
@@ -340,7 +371,7 @@ public final class AssistListener {
                     fputs("smriti assist: warm claude unavailable, cold run\n", stderr)
                     DispatchQueue.global(qos: .userInitiated).async {
                         let reply = ((try? ClaudeCLI.run(
-                            prompt: fullPrompt,
+                            prompt: remotePrompt,
                             stdin: "",
                             extraArgs: ["--model", "haiku", "--strict-mcp-config"])) ?? "")
                             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -549,15 +580,24 @@ public final class AssistListener {
             return focused
         }
 
+        // The system-wide element often reports focus when the per-app query
+        // returns NoValue (some Electron builds, incl. newer Claude Desktop).
+        let systemWide = AXUIElementCreateSystemWide()
+        if let focused = copyElement(systemWide, kAXFocusedUIElementAttribute) {
+            return focused
+        }
+
         // Electron/Chromium apps return NoValue until their accessibility
-        // tree is switched on. Flip the manual switch and retry briefly.
+        // tree is switched on. Flip the manual switch and retry — big trees
+        // (Claude, Teams) can take over a second to materialize.
         AXUIElementSetAttributeValue(
             appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         AXUIElementSetAttributeValue(
             appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
-        for _ in 0..<3 {
-            usleep(150_000)
-            if let focused = copyElement(appElement, kAXFocusedUIElementAttribute) {
+        for _ in 0..<8 {
+            usleep(200_000)
+            if let focused = copyElement(appElement, kAXFocusedUIElementAttribute)
+                ?? copyElement(systemWide, kAXFocusedUIElementAttribute) {
                 return focused
             }
         }

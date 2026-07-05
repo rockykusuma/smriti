@@ -11,6 +11,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let daemon: CaptureDaemon
     private let assist = AssistListener()
     private var meetings: MeetingWatcher!
+    private let voiceRecorder = VoiceNoteRecorder()
     private lazy var mainWindow: MainWindow = {
         let w = MainWindow(store: store, config: config)
         w.isPaused = { [weak self] in self?.daemon.isPaused ?? false }
@@ -21,6 +22,9 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         w.writeChronicleNow = { [weak self] in self?.chronicleToday() }
         w.learnToneNow = { [weak self] in self?.learnTone() }
         w.onConfigChange = { [weak self] updated in self?.applySettings(updated) }
+        w.isRecordingVoiceNote = { [weak self] in self?.voiceRecorder.isRecording ?? false }
+        w.startVoiceNote = { [weak self] in self?.startVoiceNote() }
+        w.stopVoiceNote = { [weak self] in self?.stopVoiceNote() }
         return w
     }()
 
@@ -82,7 +86,12 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         meetings = MeetingWatcher(store: store)
         meetings.contextHint = { [weak self] in self?.daemon.lastWindowCapture?.capture }
         meetings.start()
-        Transcriber.requestAuthorization()
+        // Speech Recognition authorization is a TCC request that aborts unsigned
+        // dev builds (same class of crash as the mic check), and it's only
+        // needed for meeting transcription — so gate it on the same switch.
+        if MeetingWatcher.meetingFeaturesEnabled {
+            Transcriber.requestAuthorization()
+        }
 
         print("smriti: menubar started (capture interval \(config.captureIntervalSeconds)s, reply assist: double-tap right ⌥)")
     }
@@ -195,6 +204,8 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func configureAssistBackends(_ config: Config) {
         assist.cloudSpec = nil
         assist.ollamaModel = nil
+        assist.cloudExcludedBundleIds = config.cloudExcludedBundleIds
+        assist.redactRemoteEgress = config.redactRemoteEgress
 
         // The cloud lane is "ready" when the active provider exists and
         // either has a Keychain key or is a local endpoint.
@@ -236,6 +247,54 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func stopMeeting() {
         meetings.stopRecording()
+    }
+
+    // MARK: - Manual voice notes (mic-only, from the Meetings pane)
+
+    private func startVoiceNote() {
+        do {
+            try voiceRecorder.start()
+            NSSound(named: "Pop")?.play()
+        } catch {
+            fputs("smriti voice-note: could not start: \(error)\n", stderr)
+            NSSound.beep()
+        }
+    }
+
+    private func stopVoiceNote() {
+        guard let result = voiceRecorder.stop() else { return }
+        NSSound(named: "Glass")?.play()
+        let dir = result.directory
+        let startedAt = result.startedAt
+        // Transcribe on-device and store as a meeting entry, off the main thread.
+        DispatchQueue.global(qos: .utility).async { [store, weak self] in
+            // Request Speech authorization on demand (user-initiated, app
+            // active) rather than at startup. If it's unavailable, we still
+            // store the audio with an "unavailable" note — recording is never
+            // lost.
+            if !Transcriber.ensureAuthorized() {
+                fputs("smriti voice-note: speech recognition not authorized — storing audio without a transcript\n", stderr)
+            }
+            let transcript = Transcriber.transcript(inDirectory: dir)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd HH:mm"
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            let secs = Int(Date().timeIntervalSince(startedAt))
+            let dur = secs < 60 ? "\(secs)s" : "\(secs / 60) min"
+            let title = "Voice note \(formatter.string(from: startedAt)) (\(dur))"
+            do {
+                try store.upsert(
+                    app: "Meeting",
+                    bundleId: "sh.smriti.meeting",
+                    windowTitle: title,
+                    content: transcript,
+                    url: dir.absoluteString)
+                fputs("smriti voice-note: stored — \(title)\n", stderr)
+            } catch {
+                fputs("smriti voice-note: store failed: \(error)\n", stderr)
+            }
+            DispatchQueue.main.async { self?.mainWindow.reloadMeetings() }
+        }
     }
 
     @objc private func learnTone() {

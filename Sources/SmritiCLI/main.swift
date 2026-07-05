@@ -30,6 +30,9 @@ func printUsage() {
       smriti exclude <bundleId>  Exclude an app (e.g. com.apple.Passwords)
       smriti exclude-domain <d>  Exclude a web domain incl. subdomains (e.g. mybank.com)
       smriti exclusions          List exclusions
+      smriti cloud-exclude <id>  Keep an app's reply drafts on local models (never sent to a cloud provider)
+      smriti cloud-include <id>  Undo a cloud-exclude
+      smriti redact [text]       Preview cloud-egress scrubbing (reads stdin if no text)
       smriti mcp                 Run stdio MCP server (for Claude Desktop/Cowork)
       smriti chronicle [day]     Summarize a day via `claude -p` (default: today; or YYYY-MM-DD / yesterday)
       smriti chronicles          List stored chronicles
@@ -38,6 +41,7 @@ func printUsage() {
       smriti meetings            List recorded meeting transcripts
       smriti transcribe [id]     Re-transcribe a saved meeting's audio (default: latest)
       smriti mic-check [secs]    Record a few seconds and report the mic level (default: 3)
+      smriti meeting-selftest [secs]  Test the real SCK meeting capture (system + mic) without a call; reports per-track levels (default: 6)
       smriti key set <provider> <key>    Store a cloud API key in the Keychain (e.g. smriti key set groq gsk_…)
       smriti key remove <provider>       Delete a stored key
       smriti key status                  Which providers have keys (keys never printed)
@@ -123,12 +127,46 @@ do {
         print("Excluded domain: \(domain) (and subdomains)")
 
     case "exclusions":
-        print("apps:")
+        print("apps (not captured):")
         for id in config.excludedBundleIds.sorted() { print("  \(id)") }
         print("domains:")
         for d in config.excludedDomains.sorted() { print("  \(d)") }
         print("title substrings:")
         for t in config.excludedTitleSubstrings { print("  \(t)") }
+        print("cloud-excluded apps (captured, but reply drafts stay local):")
+        for id in config.cloudExcludedBundleIds.sorted() { print("  \(id)") }
+        print("remote-egress redaction (cloud + Claude): \(config.redactRemoteEgress ? "on" : "off")")
+
+    case "cloud-exclude":
+        guard let bundleId = args.dropFirst().first else {
+            fputs("usage: smriti cloud-exclude <bundleId>   (reply drafts in this app never go to a cloud provider)\n", stderr)
+            exit(1)
+        }
+        var updated = config
+        updated.cloudExcludedBundleIds.insert(bundleId)
+        try updated.save()
+        print("Cloud-excluded: \(bundleId) (drafts here use local models only)")
+
+    case "cloud-include":
+        guard let bundleId = args.dropFirst().first else {
+            fputs("usage: smriti cloud-include <bundleId>\n", stderr)
+            exit(1)
+        }
+        var updated = config
+        updated.cloudExcludedBundleIds.remove(bundleId)
+        try updated.save()
+        print("Cloud-included: \(bundleId)")
+
+    case "redact":
+        // Preview what leaves the machine for a cloud provider. Reads the
+        // argument text, or stdin when no argument is given.
+        let inline = args.dropFirst().joined(separator: " ")
+        let text = inline.isEmpty
+            ? (String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? "")
+            : inline
+        let result = Redactor.redact(text)
+        print(result.text)
+        fputs("redacted \(result.count) sensitive value(s)\n", stderr)
 
     case "chronicle":
         let arg = args.dropFirst().first
@@ -378,6 +416,14 @@ do {
     case "mic-check":
         let secs = args.dropFirst().first.flatMap { Double($0) } ?? 3
         let ok = MicCheck().run(seconds: max(1, min(secs, 30)))
+        exit(ok ? 0 : 1)
+
+    case "meeting-selftest":
+        // Exercise the real ScreenCaptureKit dual-track recorder without a
+        // live call — reports per-track peak levels so the me.caf silence bug
+        // can be reproduced or cleared by just talking. Needs the signed binary.
+        let secs = args.dropFirst().first.flatMap { Double($0) } ?? 6
+        let ok = MeetingSelfTest.run(seconds: max(2, min(secs, 60)))
         exit(ok ? 0 : 1)
 
     case "mcp":
