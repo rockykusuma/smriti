@@ -331,9 +331,14 @@ final class HomeSection: NSObject, MainSection {
     private weak var owner: MainWindow?
     private var view: NSView?
 
-    private let statusLabel = NSTextField(labelWithString: "")
-    private let statsLabel = NSTextField(labelWithString: "")
+    private let dot = NSView()
+    private let statusText = NSTextField(labelWithString: "Capturing")
+    private let statusCaption = NSTextField(labelWithString: "")
     private let pauseButton = NSButton()
+    private let todayValue = NSTextField(labelWithString: "—")
+    private let totalValue = NSTextField(labelWithString: "—")
+    private let appsValue = NSTextField(labelWithString: "—")
+    private let spanLabel = NSTextField(labelWithString: "")
 
     init(store: Store, owner: MainWindow) {
         self.store = store
@@ -349,58 +354,151 @@ final class HomeSection: NSObject, MainSection {
         subtitle.font = Theme.body(13)
         subtitle.textColor = Theme.inkSecondary
 
-        statusLabel.font = .systemFont(ofSize: 16, weight: .semibold)
-        statsLabel.font = .systemFont(ofSize: 13)
-        statsLabel.textColor = .secondaryLabelColor
-        statsLabel.maximumNumberOfLines = 5
-        statsLabel.lineBreakMode = .byWordWrapping
-        statsLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        pauseButton.bezelStyle = .rounded
-        pauseButton.target = self
-        pauseButton.action = #selector(togglePause)
-        let chronicleBtn = NSButton(title: "Write today's chronicle", target: self, action: #selector(writeChronicle))
-        chronicleBtn.bezelStyle = .rounded
-        let toneBtn = NSButton(title: "Learn my writing tone", target: self, action: #selector(learnTone))
-        toneBtn.bezelStyle = .rounded
-
-        let buttons = NSStackView(views: [pauseButton, chronicleBtn, toneBtn])
-        buttons.orientation = .horizontal
-        buttons.spacing = 10
-
-        let stack = NSStackView(views: [heading, subtitle, statusLabel, statsLabel, buttons])
+        let stack = NSStackView(views: [heading, subtitle,
+                                        makeStatusCard(), makeStatsCard(), makeActionsRow()])
         stack.orientation = .vertical
-        stack.alignment = .leading
+        stack.alignment = .width  // stretch cards to full width
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(24, after: statsLabel)
+        stack.setCustomSpacing(4, after: heading)
+        stack.setCustomSpacing(26, after: subtitle)
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
         container.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -40),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 44),
         ])
         view = container
+        refresh()
         return container
+    }
+
+    // MARK: Cards
+
+    private func makeStatusCard() -> NSView {
+        let card = Theme.makeCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.heightAnchor.constraint(equalToConstant: 68).isActive = true
+
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 5
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        statusText.font = Theme.body(15, .semibold)
+        statusText.textColor = Theme.ink
+        statusCaption.font = Theme.body(12)
+        statusCaption.textColor = Theme.inkSecondary
+        let textCol = NSStackView(views: [statusText, statusCaption])
+        textCol.orientation = .vertical
+        textCol.alignment = .leading
+        textCol.spacing = 2
+        textCol.translatesAutoresizingMaskIntoConstraints = false
+        pauseButton.bezelStyle = .rounded
+        pauseButton.target = self
+        pauseButton.action = #selector(togglePause)
+        pauseButton.translatesAutoresizingMaskIntoConstraints = false
+
+        card.addSubview(dot); card.addSubview(textCol); card.addSubview(pauseButton)
+        NSLayoutConstraint.activate([
+            dot.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            dot.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 10),
+            dot.heightAnchor.constraint(equalToConstant: 10),
+            textCol.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 12),
+            textCol.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            pauseButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            pauseButton.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+        ])
+        return card
+    }
+
+    private func statCell(_ value: NSTextField, _ caption: String) -> NSView {
+        value.font = Theme.serif(26, .semibold)
+        value.textColor = Theme.ink
+        let cap = NSTextField(labelWithString: "")
+        cap.attributedStringValue = Theme.label(caption)
+        let col = NSStackView(views: [value, cap])
+        col.orientation = .vertical
+        col.alignment = .leading
+        col.spacing = 3
+        return col
+    }
+
+    private func makeStatsCard() -> NSView {
+        let card = Theme.makeCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.heightAnchor.constraint(equalToConstant: 112).isActive = true
+
+        let row = NSStackView(views: [statCell(todayValue, "Today"),
+                                      statCell(totalValue, "Snapshots"),
+                                      statCell(appsValue, "Apps")])
+        row.orientation = .horizontal
+        row.distribution = .fillEqually
+        row.alignment = .top
+        spanLabel.font = Theme.body(11)
+        spanLabel.textColor = Theme.inkTertiary
+        let col = NSStackView(views: [row, spanLabel])
+        col.orientation = .vertical
+        col.alignment = .leading
+        col.spacing = 12
+        col.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(col)
+        NSLayoutConstraint.activate([
+            col.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            col.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            col.topAnchor.constraint(equalTo: card.topAnchor, constant: 18),
+        ])
+        return card
+    }
+
+    private func actionButton(_ title: String, _ symbol: String, _ action: Selector) -> NSButton {
+        let b = NSButton(title: "", target: self, action: action)
+        b.isBordered = false
+        b.wantsLayer = true
+        b.layer?.backgroundColor = Theme.card.cgColor
+        b.layer?.borderColor = Theme.border.cgColor
+        b.layer?.borderWidth = 1
+        b.layer?.cornerRadius = 12
+        b.layer?.cornerCurve = .continuous
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
+        b.imagePosition = .imageLeading
+        b.contentTintColor = Theme.accent
+        b.attributedTitle = NSAttributedString(string: "  " + title, attributes: [
+            .font: Theme.body(13, .medium), .foregroundColor: Theme.ink])
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.heightAnchor.constraint(equalToConstant: 46).isActive = true
+        return b
+    }
+
+    private func makeActionsRow() -> NSView {
+        let row = NSStackView(views: [
+            actionButton("Write today's chronicle", "calendar", #selector(writeChronicle)),
+            actionButton("Learn my writing tone", "sparkles", #selector(learnTone)),
+        ])
+        row.orientation = .horizontal
+        row.distribution = .fillEqually
+        row.spacing = 12
+        return row
     }
 
     func willAppear() { refresh() }
 
     private func refresh() {
         let paused = owner?.isPaused() ?? false
-        statusLabel.stringValue = paused ? "● Paused" : "● Capturing"
-        statusLabel.textColor = paused ? .systemOrange : .systemGreen
-        pauseButton.title = paused ? "Resume capture" : "Pause capture"
+        dot.layer?.backgroundColor = (paused ? Theme.statusOff : Theme.statusOn).cgColor
+        statusText.stringValue = paused ? "Paused" : "Capturing"
+        statusCaption.stringValue = paused
+            ? "Screen capture is paused."
+            : "Smriti is quietly watching your screen."
+        pauseButton.title = paused ? "Resume" : "Pause"
         if let s = try? store.stats() {
             let today = (try? store.countForDay(Chronicler.dayString())) ?? 0
-            statsLabel.stringValue = """
-            Today: \(today) snapshots
-            Total: \(s.snapshotCount) snapshots across \(s.distinctApps) apps
-            Oldest: \(s.oldest ?? "—")
-            Newest: \(s.newest ?? "—")
-            """
+            todayValue.stringValue = "\(today)"
+            totalValue.stringValue = "\(s.snapshotCount)"
+            appsValue.stringValue = "\(s.distinctApps)"
+            spanLabel.stringValue = "\(s.oldest ?? "—")   →   \(s.newest ?? "—")"
         }
     }
 
