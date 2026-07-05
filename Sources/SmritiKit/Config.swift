@@ -40,6 +40,14 @@ public struct Config: Codable {
     ]
     /// App appearance: "system" (follow macOS), "light", or "dark".
     public var appearanceMode: String = "system"
+    /// App bundle ids whose text must never be sent to the cloud assist lane;
+    /// reply drafts triggered in these apps stay on local models. This is
+    /// distinct from `excludedBundleIds`, which blocks capture entirely.
+    public var cloudExcludedBundleIds: Set<String> = []
+    /// Scrub secrets/PII from the reply-assist prompt before it leaves the
+    /// machine. Applies to every non-local lane — a cloud provider and Claude;
+    /// a localhost Ollama (or a cloud provider pointed at localhost) is exempt.
+    public var redactRemoteEgress: Bool = true
 
     public var databasePath: String {
         Config.supportDirectory.appendingPathComponent("smriti.sqlite").path
@@ -99,6 +107,8 @@ public struct Config: Codable {
             partial.appearanceMode.map { config.appearanceMode = $0 }
             partial.cloudProvider.map { config.cloudProvider = $0 }
             partial.cloudProviders.map { config.cloudProviders = $0 }
+            partial.cloudExcludedBundleIds.map { config.cloudExcludedBundleIds = $0 }
+            partial.redactRemoteEgress.map { config.redactRemoteEgress = $0 }
             config.ensurePresetProviders()
             try config.save() // rewrite with full key set
             return config
@@ -127,6 +137,8 @@ public struct Config: Codable {
         var appearanceMode: String?
         var cloudProvider: String?
         var cloudProviders: [String: CloudProviderConfig]?
+        var cloudExcludedBundleIds: Set<String>?
+        var redactRemoteEgress: Bool?
     }
 
     public func save() throws {

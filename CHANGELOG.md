@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+- **`Scripts/build-app.sh` — run the menu bar as a real `.app` bundle.** On
+  recent macOS, Microphone and Speech Recognition are granted only to bundled
+  apps; a bare CLI binary that requests them is aborted by TCC even when signed
+  with an embedded Info.plist. So meeting recording and voice notes must run
+  from a bundle. This script builds (and optionally installs) `Smriti.app` with
+  the right Info.plist (mic + speech usage strings, `LSUIElement`) and signing.
+  The CLI at `/usr/local/bin/smriti` stays for the MCP server and terminal
+  commands, which don't need those permissions.
+
+- **Manual voice notes from the Meetings pane.** A "Record voice note" button
+  in the Meetings section captures your microphone (mic-only via AVAudioEngine —
+  needs just Microphone, not Screen Recording), and on Stop transcribes it
+  on-device and saves it as a meeting entry (searchable, feeds chronicles). A
+  live timer shows the elapsed time while recording; the list refreshes with the
+  new note once transcription finishes. Robust for dictation since nothing else
+  is holding the mic — it sidesteps the ScreenCaptureKit path entirely.
+  Independent of the call-detection meeting watcher, so voice notes work even
+  with `SMRITI_NO_MEETINGS=1`; Speech Recognition is requested on demand at the
+  end of a note (never at startup), and if it's unavailable the audio is still
+  saved with a note. Disabled only on unsigned dev builds.
+
+- **`smriti meeting-selftest [secs]`** — exercises the real ScreenCaptureKit
+  dual-track recorder (system audio + mic) for a few seconds without needing a
+  live call, then reports each track's duration, format, and peak level. Turns
+  the "is the `me.caf` mic track actually silent?" question into a five-second
+  check you can run by just talking, instead of a two-person call. Needs the
+  signed/installed binary (Microphone + Screen Recording).
+
+- **Meeting features no longer crash unsigned dev builds.** Two startup TCC
+  requests — Speech Recognition authorization and the CoreAudio mic-activity
+  check — abort the whole process on recent macOS when the running binary can't
+  satisfy them, as with an ad-hoc-signed `swift run` build under `.build/`. Both
+  are now gated behind a single switch (`MeetingWatcher.meetingFeaturesEnabled`):
+  off for dev builds and when `SMRITI_NO_MEETINGS=1`, on for installed/signed
+  builds, forceable with `SMRITI_MEETINGS=1`. When enabled, the mic watcher also
+  checks authorization status before polling and requests access via the
+  sanctioned `AVCaptureDevice` prompt. The menu bar (capture, reply assist,
+  Settings) now runs even where meeting recording can't.
+
+- **Redaction on every remote lane + per-app cloud opt-out.** Anything the
+  reply assist sends off the machine — to a cloud provider *or* to Claude — is
+  now scrubbed of secrets and personal identifiers first: API keys/tokens,
+  JWTs, private-key blocks, `password:`/`secret:` assignments, emails,
+  Luhn-valid card numbers, SSNs, and phone numbers, each replaced with a
+  `[REDACTED_…]` placeholder (`redactRemoteEgress`, on by default). Only a
+  genuinely local lane (a localhost Ollama, or a cloud provider pointed at
+  localhost) receives the raw text. Separately, `smriti cloud-exclude
+  <bundleId>` keeps a chosen app's drafts off the third-party cloud provider
+  entirely (they fall through to a local model, or to Claude with redaction).
+  New CLI: `smriti redact [text]` previews exactly what would leave the machine,
+  `smriti cloud-exclude` / `smriti cloud-include` manage the per-app list, and
+  `smriti exclusions` now shows both lists plus the redaction state. Settings
+  gains a redaction toggle and an in-app **API key field** — paste a provider
+  key and Save to store it in the login Keychain (with a Remove button), so no
+  Terminal is needed to turn the cloud lane on.
+
 - **Cloud lane for reply drafts (opt-in, BYOK).** Reply assist can now use
   any OpenAI-compatible API — Groq and OpenRouter ship as presets, and
   `smriti cloud-add <name> <baseURL> <model>` adds anything else (including

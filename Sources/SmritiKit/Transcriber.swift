@@ -12,6 +12,24 @@ public enum Transcriber {
         }
     }
 
+    /// Ensure Speech Recognition is authorized, requesting it only when the
+    /// status is undetermined (reading the status never prompts or crashes).
+    /// Call this on demand — e.g. when the user finishes a voice note — rather
+    /// than at startup, so the request happens with the app active. Returns
+    /// true when transcription can proceed.
+    @discardableResult
+    public static func ensureAuthorized(timeout: TimeInterval = 20) -> Bool {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized: return true
+        case .denied, .restricted: return false
+        default: break // .notDetermined — ask once
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        SFSpeechRecognizer.requestAuthorization { _ in semaphore.signal() }
+        _ = semaphore.wait(timeout: .now() + timeout)
+        return SFSpeechRecognizer.authorizationStatus() == .authorized
+    }
+
     /// Convert any audio file to mono 16 kHz Int16 WAV — the recognizer's
     /// preferred shape. The speech engine returns "no speech detected" on
     /// multi-channel / float recordings, so we always normalize first.
