@@ -15,14 +15,6 @@ final class PlaceholderTextView: NSTextView {
     }
 }
 
-/// A circular, filled icon button (used for the composer's send action).
-final class CircleButton: NSButton {
-    override func draw(_ dirtyRect: NSRect) {
-        layer?.cornerRadius = bounds.height / 2
-        super.draw(dirtyRect)
-    }
-}
-
 /// "Ask Smriti": a chat window over your captured memory, styled to feel calm
 /// and editorial. Each question runs an agentic Sonnet turn (via `MemoryChat`)
 /// that calls Smriti's own MCP tools; snapshot ids in answers are clickable.
@@ -36,7 +28,7 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     private let transcript = NSTextView()
     private let inputView = PlaceholderTextView()
     private let composerCard = Theme.makeCard()
-    private let sendButton = CircleButton()
+    private let sendButton = ThemedButton()
     private let newChatButton = NSButton()
     private let statusLabel = NSTextField(labelWithString: "")
     private var emptyState: NSView?
@@ -60,9 +52,8 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     func makeView() -> NSView {
         if let view { return view }
         let W: CGFloat = 739, H: CGFloat = 620
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: W, height: H))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = Theme.surface.cgColor
+        let container = ThemedView(frame: NSRect(x: 0, y: 0, width: W, height: H))
+        container.fillColor = Theme.surface
 
         // Composer card, docked at the bottom.
         let cardH: CGFloat = 104
@@ -92,10 +83,10 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
         sendButton.frame = NSRect(x: composerCard.frame.width - 14 - sSize, y: 12, width: sSize, height: sSize)
         sendButton.autoresizingMask = [.minXMargin]
         sendButton.isBordered = false
-        sendButton.wantsLayer = true
         sendButton.bezelStyle = .regularSquare
         sendButton.title = ""
-        sendButton.layer?.backgroundColor = Theme.accent.cgColor
+        sendButton.circular = true
+        sendButton.fillColor = Theme.accent
         sendButton.contentTintColor = .white
         let arrow = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Send")?
             .withSymbolConfiguration(.init(pointSize: 15, weight: .semibold))
@@ -194,14 +185,11 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
     }
 
     private func makePill(_ text: String) -> NSButton {
-        let b = NSButton(title: "", target: self, action: #selector(suggestionClicked(_:)))
+        let b = ThemedButton(title: "", target: self, action: #selector(suggestionClicked(_:)))
         b.isBordered = false
-        b.wantsLayer = true
-        b.layer?.backgroundColor = Theme.card.cgColor
-        b.layer?.borderColor = Theme.border.cgColor
-        b.layer?.borderWidth = 1
-        b.layer?.cornerRadius = 15
-        b.layer?.cornerCurve = .continuous
+        b.fillColor = Theme.card
+        b.strokeColor = Theme.border
+        b.corner = 15
         b.attributedTitle = NSAttributedString(string: text, attributes: [
             .font: Theme.body(13), .foregroundColor: Theme.ink,
         ])
@@ -240,7 +228,7 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
 
         busy = true
         sendButton.isEnabled = false
-        sendButton.layer?.backgroundColor = Theme.inkTertiary.cgColor
+        sendButton.fillColor = Theme.inkTertiary
         appendUser(q)
         beginAnswer()
         statusLabel.stringValue = "Thinking…"
@@ -259,7 +247,7 @@ final class AskSection: NSObject, MainSection, NSTextViewDelegate {
                 self.finishAnswer(answer, tools: tools)
                 self.busy = false
                 self.sendButton.isEnabled = true
-                self.sendButton.layer?.backgroundColor = Theme.accent.cgColor
+                self.sendButton.fillColor = Theme.accent
                 self.statusLabel.stringValue = ""
             }
         }
