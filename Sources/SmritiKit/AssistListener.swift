@@ -50,8 +50,11 @@ public final class AssistListener {
     /// Separate read-only connection for memory retrieval (never share a
     /// SQLite connection across threads).
     var memoryStore: Store?
-    /// When set, the assist tries this local Ollama model first and falls
-    /// back to the warm Claude process on any failure.
+    /// When set, the assist tries this cloud provider first (Groq,
+    /// OpenRouter, or any OpenAI-compatible endpoint) before Ollama/Claude.
+    var cloudSpec: CloudLLMClient.Spec?
+    /// When set, the assist tries this local Ollama model (after the cloud
+    /// lane, if any) and falls back to the warm Claude process on failure.
     var ollamaModel: String?
 
     private var pollTimer: Timer?
@@ -290,15 +293,23 @@ public final class AssistListener {
 
             var raw: String?
             var backend = "claude"
-            if let model = self.ollamaModel {
+            if let spec = self.cloudSpec {
+                backend = "\(spec.name)/\(spec.config.model)"
+                raw = CloudLLMClient(spec: spec).request(fullPrompt, onDelta: deltaHandler)
+                if raw == nil {
+                    fputs("smriti assist: \(spec.name) failed, falling back\n", stderr)
+                }
+            }
+            if raw == nil, firstDeltaAt == nil, // don't mix streams mid-typing
+               let model = self.ollamaModel {
                 backend = "ollama/\(model)"
                 raw = OllamaClient(model: model).request(fullPrompt, onDelta: deltaHandler)
                 if raw == nil {
                     fputs("smriti assist: ollama failed, falling back to claude\n", stderr)
-                    backend = "claude (fallback)"
                 }
             }
-            if raw == nil, firstDeltaAt == nil { // don't mix streams mid-typing
+            if raw == nil, firstDeltaAt == nil {
+                if backend != "claude" { backend = "claude (fallback)" }
                 raw = self.warmClaude.request(fullPrompt, onDelta: deltaHandler)
             }
             fputs("smriti assist: backend=\(backend)\n", stderr)

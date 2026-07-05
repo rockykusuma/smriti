@@ -38,6 +38,14 @@ func printUsage() {
       smriti meetings            List recorded meeting transcripts
       smriti transcribe [id]     Re-transcribe a saved meeting's audio (default: latest)
       smriti mic-check [secs]    Record a few seconds and report the mic level (default: 3)
+      smriti key set <provider> <key>    Store a cloud API key in the Keychain (e.g. smriti key set groq gsk_…)
+      smriti key remove <provider>       Delete a stored key
+      smriti key status                  Which providers have keys (keys never printed)
+      smriti cloud                       Show cloud providers and the active one
+      smriti cloud <provider> [model]    Switch active provider (and optionally its model)
+      smriti cloud-add <name> <url> <m>  Add/update an OpenAI-compatible provider (base URL + model)
+      smriti cloud-remove <name>         Remove a custom provider (presets reset instead)
+      smriti cloud-models [provider]     List model ids offered by a provider's API
       smriti retention <days>    Keep raw snapshots N days (0 = forever); chronicles always kept
       smriti prune               Prune old snapshots now (normally automatic)
       smriti menubar             Menu bar app: capture + pause/resume/exclude from the bar
@@ -139,6 +147,113 @@ do {
         for c in all {
             let preview = c.summary.replacingOccurrences(of: "\n", with: " ").prefix(100)
             print("\(c.day) (\(c.snapshotCount) snapshots, written \(c.createdAt)) :: \(preview)")
+        }
+
+    case "key":
+        let sub = Array(args.dropFirst())
+        switch sub.first {
+        case "set":
+            guard sub.count == 3 else {
+                fputs("usage: smriti key set <provider> <key>\n", stderr); exit(1)
+            }
+            let provider = sub[1].lowercased()
+            guard config.cloudProviders[provider] != nil else {
+                fputs("smriti: unknown provider '\(provider)'. Known: \(config.cloudProviders.keys.sorted().joined(separator: ", ")). Add one with: smriti cloud-add\n", stderr)
+                exit(1)
+            }
+            guard CloudKeyStore.set(sub[2], provider: provider) else {
+                fputs("smriti: could not write to the Keychain\n", stderr); exit(1)
+            }
+            print("Key for \(provider) stored in the login Keychain (never in config.json).")
+            if config.assistBackend == "auto" || config.assistBackend == "cloud" {
+                let model = config.cloudProviders[provider]?.model ?? "?"
+                print("Reply drafts will use \(provider)/\(model)\(config.cloudProvider == provider ? "" : " after: smriti cloud \(provider)").")
+            }
+        case "remove":
+            guard sub.count == 2 else {
+                fputs("usage: smriti key remove <provider>\n", stderr); exit(1)
+            }
+            print(CloudKeyStore.remove(provider: sub[1].lowercased())
+                ? "Key removed." : "No key stored for \(sub[1]).")
+        case "status", nil:
+            for name in config.cloudProviders.keys.sorted() {
+                let mark = CloudKeyStore.hasKey(provider: name) ? "✓ key stored" : "— no key"
+                print("\(name.padding(toLength: 14, withPad: " ", startingAt: 0)) \(mark)")
+            }
+        default:
+            fputs("usage: smriti key set|remove|status\n", stderr); exit(1)
+        }
+
+    case "cloud":
+        let sub = Array(args.dropFirst())
+        if sub.isEmpty {
+            print("active provider: \(config.cloudProvider) (backend: \(config.assistBackend))")
+            for (name, p) in config.cloudProviders.sorted(by: { $0.key < $1.key }) {
+                let active = name == config.cloudProvider ? "→" : " "
+                let key = CloudKeyStore.hasKey(provider: name) ? "key ✓" : (p.isLocal ? "local" : "no key")
+                print("\(active) \(name.padding(toLength: 14, withPad: " ", startingAt: 0)) \(p.model.padding(toLength: 32, withPad: " ", startingAt: 0)) \(key)  \(p.baseURL)")
+            }
+            print("switch: smriti cloud <provider> [model] · keys: smriti key set <provider> <key>")
+        } else {
+            let provider = sub[0].lowercased()
+            guard config.cloudProviders[provider] != nil else {
+                fputs("smriti: unknown provider '\(provider)'. Known: \(config.cloudProviders.keys.sorted().joined(separator: ", "))\n", stderr)
+                exit(1)
+            }
+            var updated = config
+            updated.cloudProvider = provider
+            if sub.count > 1 { updated.cloudProviders[provider]?.model = sub[1] }
+            try updated.save()
+            let model = updated.cloudProviders[provider]?.model ?? "?"
+            print("Active cloud provider: \(provider) (model: \(model))")
+            if !CloudKeyStore.hasKey(provider: provider),
+               updated.cloudProviders[provider]?.isLocal == false {
+                print("No API key stored yet — add one with: smriti key set \(provider) <key>")
+            }
+        }
+
+    case "cloud-add":
+        let sub = Array(args.dropFirst())
+        guard sub.count == 3, let url = URL(string: sub[1]), url.scheme != nil else {
+            fputs("usage: smriti cloud-add <name> <baseURL> <model>\ne.g.   smriti cloud-add together https://api.together.xyz/v1 meta-llama/Llama-3.3-70B-Instruct-Turbo\n", stderr)
+            exit(1)
+        }
+        let name = sub[0].lowercased()
+        var updated = config
+        updated.cloudProviders[name] = CloudProviderConfig(baseURL: sub[1], model: sub[2])
+        try updated.save()
+        print("Provider \(name) saved. Activate with: smriti cloud \(name)"
+            + (CloudKeyStore.hasKey(provider: name) ? "" : " · add a key: smriti key set \(name) <key>"))
+
+    case "cloud-remove":
+        guard let name = args.dropFirst().first?.lowercased() else {
+            fputs("usage: smriti cloud-remove <name>\n", stderr); exit(1)
+        }
+        var updated = config
+        guard updated.cloudProviders.removeValue(forKey: name) != nil else {
+            fputs("smriti: no provider named '\(name)'\n", stderr); exit(1)
+        }
+        updated.ensurePresetProviders() // presets can't be removed, only edited
+        if updated.cloudProvider == name, updated.cloudProviders[name] == nil {
+            updated.cloudProvider = "groq"
+        }
+        try updated.save()
+        CloudKeyStore.remove(provider: name)
+        print(updated.cloudProviders[name] != nil
+            ? "\(name) is a built-in preset — reset to defaults instead of removed."
+            : "Provider \(name) removed (and its Keychain key, if any).")
+
+    case "cloud-models":
+        let provider = (args.dropFirst().first ?? config.cloudProvider).lowercased()
+        guard let p = config.cloudProviders[provider] else {
+            fputs("smriti: unknown provider '\(provider)'\n", stderr); exit(1)
+        }
+        let models = CloudLLMClient.listModels(
+            config: p, apiKey: CloudKeyStore.get(provider: provider))
+        if models.isEmpty {
+            print("No models returned — is the API key set and the endpoint reachable? (smriti key set \(provider) <key>)")
+        } else {
+            for id in models { print(id + (id == p.model ? "   ← current" : "")) }
         }
 
     case "retention":

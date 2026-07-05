@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Cloud lane for reply drafts (opt-in, BYOK).** Reply assist can now use
+  any OpenAI-compatible API — Groq and OpenRouter ship as presets, and
+  `smriti cloud-add <name> <baseURL> <model>` adds anything else (including
+  a local Ollama's `/v1`). Nothing changes unless you add a key: API keys
+  live in the login Keychain (`smriti key set groq gsk_…`), never in
+  config.json. Backend `auto` now tries cloud (when a key is set) → local
+  Ollama → Claude; new explicit backend `cloud`. Only the current window
+  text and top memory snippets are sent — capture exclusions always apply,
+  and raw history never leaves the Mac. New CLI: `smriti key set|remove|status`,
+  `smriti cloud [provider] [model]`, `smriti cloud-add`, `smriti cloud-remove`,
+  `smriti cloud-models`. Settings gains a Cloud backend with provider and
+  model pickers (models listed live from the provider's API).
+
 - **Main window with a sidebar.** Menu bar → "Open Smriti" (⌘O) opens one
   window with a sidebar — Home (status, today's count, quick actions), Meetings,
   Search (full-text over your memory), Chronicles, and Settings. Replaces the
