@@ -12,6 +12,9 @@ public final class MeetingWatcher {
     private let store: Store
     /// Hint for naming: the capture daemon's view of the frontmost window.
     var contextHint: (() -> AXReader.WindowCapture?)?
+    /// A manual voice note holds the mic too — returns true while one is
+    /// recording, so the watcher doesn't mistake it for a call and prompt.
+    var voiceNoteActive: (() -> Bool)?
 
     private let recorder = MeetingRecorder()
     private var pollTimer: Timer?
@@ -122,7 +125,8 @@ public final class MeetingWatcher {
     // MARK: - State machine
 
     private func poll() {
-        let active = MeetingWatcher.microphoneInUse()
+        // A manual voice note holds the mic; don't treat that as a call.
+        let active = MeetingWatcher.microphoneInUse() && !(voiceNoteActive?() ?? false)
 
         switch state {
         case .idle:
