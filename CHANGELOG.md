@@ -12,8 +12,12 @@
   text and top memory snippets are sent — capture exclusions always apply,
   and raw history never leaves the Mac. New CLI: `smriti key set|remove|status`,
   `smriti cloud [provider] [model]`, `smriti cloud-add`, `smriti cloud-remove`,
-  `smriti cloud-models`. Settings gains a Cloud backend with provider and
-  model pickers (models listed live from the provider's API).
+  `smriti cloud-models`, and `smriti cloud-test` (reports first-token and
+  total latency). Settings gains a Cloud backend with provider and
+  model pickers (models listed live from the provider's API). Key lookup
+  order: Keychain → `<PROVIDER>_API_KEY` env var →
+  `~/Library/Application Support/Smriti/.env`. Measured on a real key:
+  Groq gpt-oss-120b delivers a full short reply in under a second.
 
 - **Main window with a sidebar.** Menu bar → "Open Smriti" (⌘O) opens one
   window with a sidebar — Home (status, today's count, quick actions), Meetings,
