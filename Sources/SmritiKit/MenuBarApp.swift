@@ -76,19 +76,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // Show the caret-anchored "drafting…" pill once the target field is known.
         assist.draftAnchor = { [weak self] caret in self?.showDraftHUD(anchor: caret) }
-        switch config.assistBackend {
-        case "claude":
-            break
-        case "ollama":
-            assist.ollamaModel = config.ollamaModel
-            OllamaClient.warmUp(model: config.ollamaModel)
-        default: // auto
-            if OllamaClient.isReachable() {
-                assist.ollamaModel = config.ollamaModel
-                OllamaClient.warmUp(model: config.ollamaModel)
-                fputs("smriti assist: using local \(config.ollamaModel) (claude fallback)\n", stderr)
-            }
-        }
+        configureAssistBackends(config)
         assist.start()
 
         meetings = MeetingWatcher(store: store)
@@ -199,21 +187,51 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func applySettings(_ updated: Config) {
         config = updated
-        switch updated.assistBackend {
+        configureAssistBackends(updated)
+    }
+
+    /// Points the assist at its lanes per the configured backend.
+    /// Fallback chain inside the assist: cloud → ollama → warm Claude.
+    private func configureAssistBackends(_ config: Config) {
+        assist.cloudSpec = nil
+        assist.ollamaModel = nil
+
+        // The cloud lane is "ready" when the active provider exists and
+        // either has a Keychain key or is a local endpoint.
+        let cloudSpec: CloudLLMClient.Spec? = {
+            guard let provider = config.cloudProviders[config.cloudProvider]
+            else { return nil }
+            let key = CloudKeyStore.get(provider: config.cloudProvider)
+            guard key != nil || provider.isLocal else { return nil }
+            return CloudLLMClient.Spec(
+                name: config.cloudProvider, config: provider, apiKey: key)
+        }()
+
+        switch config.assistBackend {
         case "claude":
-            assist.ollamaModel = nil
+            break
         case "ollama":
-            assist.ollamaModel = updated.ollamaModel
-            OllamaClient.warmUp(model: updated.ollamaModel)
-        default:
-            if OllamaClient.isReachable() {
-                assist.ollamaModel = updated.ollamaModel
-                OllamaClient.warmUp(model: updated.ollamaModel)
+            assist.ollamaModel = config.ollamaModel
+            OllamaClient.warmUp(model: config.ollamaModel)
+        case "cloud":
+            if let cloudSpec {
+                assist.cloudSpec = cloudSpec
             } else {
-                assist.ollamaModel = nil
+                fputs("smriti assist: no API key for \(config.cloudProvider) — run: smriti key set \(config.cloudProvider) <key>. Using Claude.\n", stderr)
+            }
+        default: // auto: cloud when a key is set, plus ollama when running
+            assist.cloudSpec = cloudSpec
+            if OllamaClient.isReachable() {
+                assist.ollamaModel = config.ollamaModel
+                OllamaClient.warmUp(model: config.ollamaModel)
             }
         }
-        fputs("smriti settings: assist backend=\(updated.assistBackend) model=\(updated.ollamaModel)\n", stderr)
+        let lanes = [
+            assist.cloudSpec.map { "\($0.name)/\($0.config.model)" },
+            assist.ollamaModel.map { "ollama/\($0)" },
+            "claude",
+        ].compactMap { $0 }.joined(separator: " → ")
+        fputs("smriti assist: backend=\(config.assistBackend) lanes: \(lanes)\n", stderr)
     }
 
     @objc private func stopMeeting() {

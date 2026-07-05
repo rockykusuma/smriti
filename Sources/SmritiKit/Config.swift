@@ -19,12 +19,25 @@ public struct Config: Codable {
     /// Days to keep raw snapshots before the daemon prunes them
     /// (chronicles are kept forever). 0 disables pruning.
     public var retentionDays: Int = 90
-    /// Reply-assist model backend: "auto" (Ollama when running, else
-    /// Claude), "ollama", or "claude". Chronicles/tone/summaries always
-    /// use Claude for quality.
+    /// Reply-assist model backend: "auto" (cloud when a key is set, else
+    /// Ollama when running, else Claude), "cloud", "ollama", or "claude".
+    /// Chronicles/tone/summaries always use Claude for quality.
     public var assistBackend: String = "auto"
     /// Local model for the assist when Ollama is used.
     public var ollamaModel: String = "llama3.2:latest"
+    /// Active cloud provider — a key into `cloudProviders`.
+    public var cloudProvider: String = "groq"
+    /// OpenAI-compatible endpoints. Presets: groq, openrouter. Add more
+    /// with `smriti cloud-add <name> <baseURL> <model>`. API keys live in
+    /// the Keychain (`smriti key set <provider> <key>`), never here.
+    public var cloudProviders: [String: CloudProviderConfig] = Config.defaultCloudProviders
+
+    static let defaultCloudProviders: [String: CloudProviderConfig] = [
+        "groq": CloudProviderConfig(
+            baseURL: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-120b"),
+        "openrouter": CloudProviderConfig(
+            baseURL: "https://openrouter.ai/api/v1", model: "openrouter/auto"),
+    ]
     /// App appearance: "system" (follow macOS), "light", or "dark".
     public var appearanceMode: String = "system"
 
@@ -68,7 +81,9 @@ public struct Config: Codable {
         }
         let decoder = JSONDecoder()
         do {
-            return try decoder.decode(Config.self, from: data)
+            var config = try decoder.decode(Config.self, from: data)
+            config.ensurePresetProviders()
+            return config
         } catch {
             // Older config without newer keys: decode leniently via partial.
             let partial = try decoder.decode(PartialConfig.self, from: data)
@@ -82,8 +97,20 @@ public struct Config: Codable {
             partial.assistBackend.map { config.assistBackend = $0 }
             partial.ollamaModel.map { config.ollamaModel = $0 }
             partial.appearanceMode.map { config.appearanceMode = $0 }
+            partial.cloudProvider.map { config.cloudProvider = $0 }
+            partial.cloudProviders.map { config.cloudProviders = $0 }
+            config.ensurePresetProviders()
             try config.save() // rewrite with full key set
             return config
+        }
+    }
+
+    /// Presets (groq, openrouter) reappear after upgrades from older configs;
+    /// user edits to an existing entry always win.
+    public mutating func ensurePresetProviders() {
+        for (name, preset) in Config.defaultCloudProviders
+        where cloudProviders[name] == nil {
+            cloudProviders[name] = preset
         }
     }
 
@@ -98,6 +125,8 @@ public struct Config: Codable {
         var assistBackend: String?
         var ollamaModel: String?
         var appearanceMode: String?
+        var cloudProvider: String?
+        var cloudProviders: [String: CloudProviderConfig]?
     }
 
     public func save() throws {

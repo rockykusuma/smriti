@@ -518,6 +518,9 @@ final class SettingsSection: NSObject, MainSection {
     private var view: NSView?
 
     private let backendPopup = NSPopUpButton()
+    private let providerPopup = NSPopUpButton()
+    private let providerLabel = NSTextField(labelWithString: "Cloud provider")
+    private let modelLabel = NSTextField(labelWithString: "Model")
     private let modelPopup = NSPopUpButton()
     private let statusLabel = NSTextField(labelWithString: "")
     private let loginStatusLabel = NSTextField(labelWithString: "")
@@ -546,12 +549,18 @@ final class SettingsSection: NSObject, MainSection {
         let backendLabel = NSTextField(labelWithString: "Reply drafts by")
         backendLabel.font = .systemFont(ofSize: 13, weight: .medium)
         backendPopup.addItems(withTitles: [
-            "Auto — local when available", "Ollama (local only)", "Claude (subscription)",
+            "Auto — best available",
+            "Cloud (Groq, OpenRouter…)",
+            "Ollama (local only)",
+            "Claude (subscription)",
         ])
         backendPopup.target = self
         backendPopup.action = #selector(changed)
 
-        let modelLabel = NSTextField(labelWithString: "Local model")
+        providerLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        providerPopup.target = self
+        providerPopup.action = #selector(changedProvider)
+
         modelLabel.font = .systemFont(ofSize: 13, weight: .medium)
         modelPopup.target = self
         modelPopup.action = #selector(changed)
@@ -589,6 +598,7 @@ final class SettingsSection: NSObject, MainSection {
             heading,
             appearanceLabel, appearanceControl,
             backendLabel, backendPopup,
+            providerLabel, providerPopup,
             modelLabel, modelPopup,
             statusLabel, note,
             cliHeading, loginStatusLabel, loginRow,
@@ -611,6 +621,7 @@ final class SettingsSection: NSObject, MainSection {
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 44),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
             backendPopup.widthAnchor.constraint(equalToConstant: 300),
+            providerPopup.widthAnchor.constraint(equalToConstant: 300),
             modelPopup.widthAnchor.constraint(equalToConstant: 300),
         ])
         view = container
@@ -652,12 +663,41 @@ final class SettingsSection: NSObject, MainSection {
         }
     }
 
+    private static let backendKeys = ["auto", "cloud", "ollama", "claude"]
+
+    /// The cloud picker is shown for "auto" and "cloud"; the model popup
+    /// switches between local (Ollama) and cloud models to match.
+    private var showsCloudModels: Bool {
+        config.assistBackend == "cloud"
+            || (config.assistBackend == "auto"
+                && CloudKeyStore.hasKey(provider: config.cloudProvider))
+    }
+
+    /// What the model popup currently lists — decided at refresh time, so a
+    /// backend switch doesn't save an Ollama title into a cloud provider.
+    private var modelPopupListsCloud = false
+
     private func refresh() {
-        switch config.assistBackend {
-        case "ollama": backendPopup.selectItem(at: 1)
-        case "claude": backendPopup.selectItem(at: 2)
-        default: backendPopup.selectItem(at: 0)
+        backendPopup.selectItem(
+            at: SettingsSection.backendKeys.firstIndex(of: config.assistBackend) ?? 0)
+
+        let cloudVisible = config.assistBackend == "cloud" || config.assistBackend == "auto"
+        providerLabel.isHidden = !cloudVisible
+        providerPopup.isHidden = !cloudVisible
+        providerPopup.removeAllItems()
+        providerPopup.addItems(withTitles: config.cloudProviders.keys.sorted())
+        providerPopup.selectItem(withTitle: config.cloudProvider)
+
+        if showsCloudModels {
+            refreshCloudModels()
+        } else {
+            refreshOllamaModels()
         }
+    }
+
+    private func refreshOllamaModels() {
+        modelPopupListsCloud = false
+        modelLabel.stringValue = "Local model"
         let models = OllamaClient.listModels()
         modelPopup.removeAllItems()
         if models.isEmpty {
@@ -673,9 +713,55 @@ final class SettingsSection: NSObject, MainSection {
         }
     }
 
+    private func refreshCloudModels() {
+        let providerName = config.cloudProvider
+        guard let provider = config.cloudProviders[providerName] else { return }
+        modelPopupListsCloud = true
+        modelLabel.stringValue = "Cloud model"
+        modelPopup.removeAllItems()
+        modelPopup.addItem(withTitle: provider.model)
+        modelPopup.isEnabled = true
+
+        guard CloudKeyStore.hasKey(provider: providerName) || provider.isLocal else {
+            statusLabel.stringValue = "No API key for \(providerName). Add one in Terminal: smriti key set \(providerName) <key> — free keys at console.groq.com."
+            return
+        }
+        statusLabel.stringValue = "\(providerName) key found. Drafts use \(provider.model); only the window text of the moment is sent, exclusions always apply."
+        // Model list comes from the provider's /models endpoint — network, so
+        // fetch off the main thread and fill in when it lands.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let key = CloudKeyStore.get(provider: providerName)
+            let models = CloudLLMClient.listModels(config: provider, apiKey: key)
+            DispatchQueue.main.async {
+                guard let self, self.showsCloudModels,
+                      self.config.cloudProvider == providerName, !models.isEmpty
+                else { return }
+                let current = self.config.cloudProviders[providerName]?.model ?? provider.model
+                self.modelPopup.removeAllItems()
+                self.modelPopup.addItems(withTitles: models)
+                if !models.contains(current) { self.modelPopup.addItem(withTitle: current) }
+                self.modelPopup.selectItem(withTitle: current)
+            }
+        }
+    }
+
+    @objc private func changedProvider() {
+        if let title = providerPopup.titleOfSelectedItem { config.cloudProvider = title }
+        try? config.save()
+        refresh()
+        onChange(config)
+    }
+
     @objc private func changed() {
-        config.assistBackend = ["auto", "ollama", "claude"][max(0, backendPopup.indexOfSelectedItem)]
-        if let title = modelPopup.titleOfSelectedItem { config.ollamaModel = title }
+        config.assistBackend =
+            SettingsSection.backendKeys[max(0, backendPopup.indexOfSelectedItem)]
+        if let title = modelPopup.titleOfSelectedItem {
+            if modelPopupListsCloud {
+                config.cloudProviders[config.cloudProvider]?.model = title
+            } else {
+                config.ollamaModel = title
+            }
+        }
         try? config.save()
         refresh()
         onChange(config)

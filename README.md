@@ -16,10 +16,13 @@ server exposes that memory to Claude Desktop, so you can ask things like:
 > *"Find that error message I saw in Terminal yesterday."*
 > *"What did I read about FTS5 last week?"*
 
-**Everything stays on your Mac.** No cloud, no telemetry, no API keys. Smriti
-ships no model of its own: the thinking is done by Claude via your existing
-subscription, or — for instant replies — by a local Ollama model you run
-yourself, so that text never leaves the machine.
+**Your memory stays on your Mac.** No telemetry, no server of ours, local by
+default. Smriti ships no model of its own: the thinking is done by Claude via
+your existing subscription, or by a local Ollama model you run yourself.
+Optionally — strictly bring-your-own-key, off until you add one — reply
+drafting can use a fast cloud API (Groq, OpenRouter, or any OpenAI-compatible
+endpoint); even then only the window you're replying in is sent, never your
+stored history.
 
 ## Why
 
@@ -123,31 +126,57 @@ Monitoring permission alongside Accessibility.
 
 ### Local or cloud replies (hybrid backend)
 
-Reply assist can draft with a **local Ollama model** or with **Claude**. When
-Ollama is running, drafts are generated on-device — the first token lands in
-well under a second and your reply text never leaves the Mac. If Ollama isn't
-reachable, Smriti automatically falls back to a pre-warmed Claude process, so
-the double-tap always works.
+Reply assist can draft with a **local Ollama model**, a **cloud API you bring
+your own key for** (Groq, OpenRouter, or any OpenAI-compatible endpoint), or
+with **Claude**. The fallback chain always ends at Claude, so the double-tap
+always works.
 
-Two config keys in `config.json` control it:
+Config keys in `config.json` (API keys are **never** stored there):
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `assistBackend` | `auto` (Ollama, fall back to Claude) · `ollama` · `claude` | `auto` |
+| `assistBackend` | `auto` (cloud if a key is set → Ollama if running → Claude) · `cloud` · `ollama` · `claude` | `auto` |
 | `ollamaModel` | any installed Ollama model tag | `llama3.2:latest` |
+| `cloudProvider` | a name from `cloudProviders` | `groq` |
+| `cloudProviders` | map of `{name: {baseURL, model}}` — presets: `groq`, `openrouter` | — |
 
-To use local replies, install [Ollama](https://ollama.com) and pull a small
+**Local replies:** install [Ollama](https://ollama.com) and pull a small
 instruct model:
 
 ```bash
 ollama pull llama3.2      # fast; great for short replies
 ```
 
-Smriti keeps the chosen model resident so there's no cold-start cost. Switch
-the backend and model live from the menu bar → **Settings…** (⌘,) — the popups
-list every model Ollama reports, and changes apply immediately (the new model
-is re-warmed without a restart). Chronicles, tone learning, and meeting
-summaries always use Claude for quality, regardless of this setting.
+**Cloud replies (opt-in, bring your own key):** create a free key at
+[console.groq.com](https://console.groq.com) (note: Groq the inference
+company, not Grok the xAI model — free tier, no card needed), then:
+
+```bash
+smriti key set groq gsk_your_key_here   # stored in the login Keychain
+smriti cloud                            # see providers, active model
+smriti cloud-models                     # list models the provider offers
+smriti cloud groq openai/gpt-oss-20b    # switch model (or provider)
+```
+
+Any OpenAI-compatible endpoint works the same way:
+
+```bash
+smriti cloud-add together https://api.together.xyz/v1 meta-llama/Llama-3.3-70B-Instruct-Turbo
+smriti key set together <key>
+smriti cloud together
+```
+
+What leaves the Mac when a cloud backend drafts a reply: the visible text of
+the window you're replying in, up to three related memory snippets, and your
+tone profile — nothing else. Capture exclusions apply long before any of
+this exists, and your raw history never leaves the machine. No key, no cloud:
+without a stored key Smriti behaves exactly as before.
+
+Smriti keeps the chosen Ollama model resident so there's no cold-start cost.
+Switch backend, provider, and model live from the menu bar → **Settings…**
+(⌘,) — the model popup lists what Ollama or the cloud provider reports, and
+changes apply immediately. Chronicles, tone learning, and meeting summaries
+always use Claude for quality, regardless of this setting.
 
 ## Usage
 
@@ -214,8 +243,12 @@ Smriti sees what you see. That is the point, and the risk. Mitigations:
   feature. If you don't want a conversation to see it, remove the server
   or pause capture.
 - Chronicles send a *digest of your day* through the Claude Code CLI under
-  your subscription — the only data that ever leaves the machine, and only
-  when you (or your scheduler) invoke it.
+  your subscription — only when you (or your scheduler) invoke it.
+- If you opt into a cloud reply backend (your own API key, stored in the
+  Keychain), each draft sends that moment's window text, up to three related
+  memory snippets, and your tone profile to the provider you chose — never
+  the database, never in the background. Remove the key (`smriti key remove
+  groq`) and it's fully local again.
 
 ## Meeting recording (consent-first)
 
