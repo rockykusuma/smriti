@@ -173,13 +173,20 @@ do {
             guard sub.count == 2 else {
                 fputs("usage: smriti key remove <provider>\n", stderr); exit(1)
             }
-            print(CloudKeyStore.remove(provider: sub[1].lowercased())
-                ? "Key removed." : "No key stored for \(sub[1]).")
+            let provider = sub[1].lowercased()
+            print(CloudKeyStore.remove(provider: provider)
+                ? "Keychain key removed." : "No Keychain key stored for \(provider).")
+            if let source = CloudKeyStore.source(provider: provider) {
+                print("Note: a key is still being picked up from \(source)"
+                    + (source == ".env" ? " — edit \(CloudKeyStore.envFileURL.path)" : "") + ".")
+            }
         case "status", nil:
             for name in config.cloudProviders.keys.sorted() {
-                let mark = CloudKeyStore.hasKey(provider: name) ? "✓ key stored" : "— no key"
+                let mark = CloudKeyStore.source(provider: name)
+                    .map { "✓ key (\($0))" } ?? "— no key"
                 print("\(name.padding(toLength: 14, withPad: " ", startingAt: 0)) \(mark)")
             }
+            print("file fallback: \(CloudKeyStore.envFileURL.path) (GROQ_API_KEY=… lines)")
         default:
             fputs("usage: smriti key set|remove|status\n", stderr); exit(1)
         }

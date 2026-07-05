@@ -158,6 +158,11 @@ smriti cloud-models                     # list models the provider offers
 smriti cloud groq openai/gpt-oss-20b    # switch model (or provider)
 ```
 
+Prefer a file? Put `GROQ_API_KEY=…` in
+`~/Library/Application Support/Smriti/.env` (lookup order: Keychain →
+environment variable → that file). It lives outside any git repo on purpose —
+never put keys in a `.env` inside this repo.
+
 Any OpenAI-compatible endpoint works the same way:
 
 ```bash

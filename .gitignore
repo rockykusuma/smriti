@@ -1,5 +1,9 @@
 .build/
 .swiftpm/
+# Never commit API keys. Smriti reads them from the Keychain or from
+# ~/Library/Application Support/Smriti/.env — outside the repo, not here.
+.env
+.env.*
 *.dSYM/
 .DS_Store
 xcuserdata/

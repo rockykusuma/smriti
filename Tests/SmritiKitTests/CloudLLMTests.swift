@@ -73,6 +73,32 @@ final class CloudLLMTests: XCTestCase {
         XCTAssertEqual(config.cloudProviders["groq"]?.model, "openai/gpt-oss-20b")
     }
 
+    // MARK: - .env fallback
+
+    func testEnvVarName() {
+        XCTAssertEqual(CloudKeyStore.envVarName(provider: "groq"), "GROQ_API_KEY")
+        XCTAssertEqual(CloudKeyStore.envVarName(provider: "openrouter"), "OPENROUTER_API_KEY")
+        XCTAssertEqual(CloudKeyStore.envVarName(provider: "ollama-v1"), "OLLAMA_V1_API_KEY")
+    }
+
+    func testParseEnvBasics() {
+        let env = CloudKeyStore.parseEnv("""
+        # cloud keys
+        GROQ_API_KEY=gsk_abc123
+        export OPENROUTER_API_KEY="sk-or-xyz"
+        QUOTED='single'
+        EMPTY=
+        NOEQUALS
+          SPACED  =  padded
+        """)
+        XCTAssertEqual(env["GROQ_API_KEY"], "gsk_abc123")
+        XCTAssertEqual(env["OPENROUTER_API_KEY"], "sk-or-xyz") // export + quotes stripped
+        XCTAssertEqual(env["QUOTED"], "single")
+        XCTAssertNil(env["EMPTY"])   // empty values are treated as absent
+        XCTAssertNil(env["NOEQUALS"])
+        XCTAssertEqual(env["SPACED"], "padded")
+    }
+
     // MARK: - Live streaming (runs only when a local Ollama is up; CI skips)
 
     func testLiveStreamAgainstLocalOpenAIEndpoint() throws {
