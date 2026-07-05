@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 
 /// The main Smriti window: a sidebar (Home, Meetings, Search, Chronicles,
 /// Settings) that swaps a content view. Replaces the old standalone Meetings
@@ -17,6 +18,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
     var startVoiceNote: () -> Void = {}
     var stopVoiceNote: () -> Void = {}
     var isRecordingVoiceNote: () -> Bool = { false }
+    var voiceNoteLevel: () -> Float = { 0 }
 
     private var window: NSWindow?
     private let sidebar = NSTableView()
@@ -62,7 +64,8 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
             toggle: { [weak self] in
                 guard let self else { return }
                 if self.isRecordingVoiceNote() { self.stopVoiceNote() } else { self.startVoiceNote() }
-            })
+            },
+            level: { [weak self] in self?.voiceNoteLevel() ?? 0 })
     }
 
     /// Open the window on a given section (0 = Home).
@@ -239,13 +242,30 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         let enabled: Bool
         let isActive: () -> Bool
         let toggle: () -> Void
+        /// Current mic input level (0...1) for the live meter.
+        let level: () -> Float
     }
     var recordControls: RecordControls?
     private let recordButton = NSButton()
     private let recordStatus = NSTextField(labelWithString: "")
-    private var elapsedTimer: Timer?
     private var recordStartedAt: Date?
     private static let headerHeight: CGFloat = 48
+
+    // Recording visualizer (Meetings only), shown over the list while a voice
+    // note records or transcribes.
+    private enum RecState { case idle, recording, transcribing }
+    private var recState: RecState = .idle
+    private var recordingPanel: NSView?
+    private let levelMeter = LevelMeterView(frame: NSRect(x: 0, y: 0, width: 440, height: 90))
+    private let recDot = NSView(frame: NSRect(x: 0, y: 0, width: 12, height: 12))
+    private let recTitle = NSTextField(labelWithString: "Recording")
+    private let recElapsed = NSTextField(labelWithString: "0:00")
+    private let recHint = NSTextField(labelWithString: "Speak now. Click Stop & save when you're done.")
+    private let transcribeSpinner = NSProgressIndicator()
+    private let transcribeLabel = NSTextField(labelWithString: "Transcribing your note on-device...")
+    private var titleRow: NSStackView?
+    private var transRow: NSStackView?
+    private var levelTimer: Timer?
 
     init(title: String, symbol: String, empty: String, loader: @escaping () -> [(String, String)]) {
         self.title = title
@@ -305,6 +325,67 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         split.addSubview(textScroll)
         container.addSubview(split)
         split.setPosition(260, ofDividerAt: 0)
+
+        if hasHeader {
+            let panel = ThemedView(frame: NSRect(x: 0, y: 0, width: 739, height: splitHeight))
+            panel.fillColor = Theme.surface
+            panel.autoresizingMask = [.width, .height]
+            panel.isHidden = true
+
+            recDot.wantsLayer = true
+            recDot.layer?.backgroundColor = NSColor.systemRed.cgColor
+            recDot.layer?.cornerRadius = 6
+            recDot.translatesAutoresizingMaskIntoConstraints = false
+            recDot.widthAnchor.constraint(equalToConstant: 12).isActive = true
+            recDot.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+            recTitle.font = .systemFont(ofSize: 15, weight: .semibold)
+            recTitle.textColor = Theme.ink
+            let tRow = NSStackView(views: [recDot, recTitle])
+            tRow.orientation = .horizontal
+            tRow.spacing = 8
+            tRow.alignment = .centerY
+            titleRow = tRow
+
+            recElapsed.font = .monospacedDigitSystemFont(ofSize: 44, weight: .thin)
+            recElapsed.textColor = Theme.ink
+            recElapsed.alignment = .center
+
+            levelMeter.barColor = .systemRed
+            levelMeter.translatesAutoresizingMaskIntoConstraints = false
+            levelMeter.widthAnchor.constraint(equalToConstant: 440).isActive = true
+            levelMeter.heightAnchor.constraint(equalToConstant: 90).isActive = true
+
+            recHint.font = .systemFont(ofSize: 12)
+            recHint.textColor = .secondaryLabelColor
+            recHint.alignment = .center
+
+            transcribeSpinner.style = .spinning
+            transcribeSpinner.controlSize = .small
+            transcribeSpinner.isDisplayedWhenStopped = false
+            transcribeLabel.font = .systemFont(ofSize: 13)
+            transcribeLabel.textColor = Theme.ink
+            let trRow = NSStackView(views: [transcribeSpinner, transcribeLabel])
+            trRow.orientation = .horizontal
+            trRow.spacing = 10
+            trRow.alignment = .centerY
+            transRow = trRow
+
+            let vstack = NSStackView(views: [tRow, recElapsed, levelMeter, recHint, trRow])
+            vstack.orientation = .vertical
+            vstack.alignment = .centerX
+            vstack.spacing = 18
+            vstack.translatesAutoresizingMaskIntoConstraints = false
+            panel.addSubview(vstack)
+            NSLayoutConstraint.activate([
+                vstack.centerXAnchor.constraint(equalTo: panel.centerXAnchor),
+                vstack.centerYAnchor.constraint(equalTo: panel.centerYAnchor),
+                vstack.leadingAnchor.constraint(greaterThanOrEqualTo: panel.leadingAnchor, constant: 24),
+            ])
+            container.addSubview(panel) // sits above the split; shown while recording
+            recordingPanel = panel
+        }
+
         view = container
         return container
     }
@@ -323,43 +404,86 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         } else {
             text.string = emptyMessage
         }
-        updateRecordUI()
+        // A finished transcription (store -> reloadMeetings) ends the
+        // transcribing state; an active recording keeps its state.
+        if recState == .transcribing { recState = .idle }
+        if recordControls?.isActive() == true { recState = .recording }
+        applyRecState()
     }
 
     @objc private func toggleRecord() {
-        guard let rc = recordControls else { return }
-        if !rc.isActive() { recordStartedAt = Date() }
-        rc.toggle()
-        updateRecordUI()
+        guard let rc = recordControls, rc.enabled else { return }
+        if rc.isActive() {
+            rc.toggle()                 // stop -> async transcribe + store
+            recState = .transcribing
+        } else {
+            recordStartedAt = Date()
+            rc.toggle()                 // start
+            recState = rc.isActive() ? .recording : .idle
+        }
+        applyRecState()
     }
 
-    private func updateRecordUI() {
+    private func applyRecState() {
         guard let rc = recordControls else { return }
-        recordButton.isEnabled = rc.enabled
-        if rc.isActive() {
-            recordButton.title = "◼ Stop & save"
-            recordStartedAt = recordStartedAt ?? Date()
-            recordStatus.stringValue = elapsedLabel()
-            if elapsedTimer == nil {
-                elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                    self?.recordStatus.stringValue = self?.elapsedLabel() ?? ""
-                }
-            }
-        } else {
+        switch recState {
+        case .idle:
+            recordButton.isEnabled = rc.enabled
             recordButton.title = "● Record voice note"
-            elapsedTimer?.invalidate()
-            elapsedTimer = nil
-            recordStartedAt = nil
             recordStatus.stringValue = rc.enabled
                 ? "Talk, then Stop — transcribed on-device and saved below."
                 : "Available in the installed app (needs Microphone + Speech Recognition)."
+            recordingPanel?.isHidden = true
+            stopLevelTimer()
+        case .recording:
+            recordButton.isEnabled = true
+            recordButton.title = "◼ Stop & save"
+            recordStatus.stringValue = "Recording…"
+            titleRow?.isHidden = false
+            recElapsed.isHidden = false
+            levelMeter.isHidden = false
+            recHint.isHidden = false
+            transRow?.isHidden = true
+            transcribeSpinner.stopAnimation(nil)
+            recordingPanel?.isHidden = false
+            startLevelTimer()
+        case .transcribing:
+            recordButton.isEnabled = false
+            recordButton.title = "● Record voice note"
+            recordStatus.stringValue = "Transcribing…"
+            titleRow?.isHidden = true
+            recElapsed.isHidden = true
+            levelMeter.isHidden = true
+            recHint.isHidden = true
+            transRow?.isHidden = false
+            transcribeSpinner.startAnimation(nil)
+            recordingPanel?.isHidden = false
+            stopLevelTimer()
         }
     }
 
-    private func elapsedLabel() -> String {
-        let secs = Int(Date().timeIntervalSince(recordStartedAt ?? Date()))
-        return String(format: "Recording… %d:%02d — speak now, then click Stop to transcribe & save.",
-                      secs / 60, secs % 60)
+    private func startLevelTimer() {
+        stopLevelTimer()
+        levelMeter.reset()
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self, let rc = self.recordControls else { return }
+            let lvl = Double(rc.level())
+            // Map linear amplitude to 0...1 across ~ -60...0 dBFS, so a normal
+            // speaking voice fills a good part of the meter.
+            let norm = lvl > 0 ? max(0, min(1, (20 * log10(lvl) + 60) / 60)) : 0
+            self.levelMeter.push(CGFloat(norm))
+            let secs = Int(Date().timeIntervalSince(self.recordStartedAt ?? Date()))
+            self.recElapsed.stringValue = String(format: "%d:%02d", secs / 60, secs % 60)
+            // Gentle pulse on the record dot.
+            let phase = abs(sin(Date().timeIntervalSinceReferenceDate * 3))
+            self.recDot.alphaValue = 0.4 + 0.6 * CGFloat(phase)
+        }
+    }
+
+    private func stopLevelTimer() {
+        levelTimer?.invalidate()
+        levelTimer = nil
+        recDot.alphaValue = 1
     }
 
     static func makeTextScroll(_ text: NSTextView, frame: NSRect) -> NSScrollView {

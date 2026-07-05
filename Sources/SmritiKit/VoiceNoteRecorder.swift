@@ -24,9 +24,17 @@ public final class VoiceNoteRecorder {
     private var directory: URL?
     private var startedAt = Date()
     private var peak: Float = 0
+    private var lastLevel: Float = 0
     private let lock = NSLock()
 
     public private(set) var isRecording = false
+
+    /// The most recent short-window input level (0...1), for a live meter.
+    /// Thread-safe; returns 0 when not recording.
+    public var currentLevel: Float {
+        lock.lock(); defer { lock.unlock() }
+        return isRecording ? lastLevel : 0
+    }
 
     public init() {}
 
@@ -101,6 +109,9 @@ public final class VoiceNoteRecorder {
                 for i in 0 ..< frames { localPeak = max(localPeak, abs(p[i])) }
             }
         }
-        lock.lock(); peak = max(peak, localPeak); lock.unlock()
+        lock.lock()
+        peak = max(peak, localPeak)
+        lastLevel = localPeak
+        lock.unlock()
     }
 }

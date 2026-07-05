@@ -23,6 +23,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         w.learnToneNow = { [weak self] in self?.learnTone() }
         w.onConfigChange = { [weak self] updated in self?.applySettings(updated) }
         w.isRecordingVoiceNote = { [weak self] in self?.voiceRecorder.isRecording ?? false }
+        w.voiceNoteLevel = { [weak self] in self?.voiceRecorder.currentLevel ?? 0 }
         w.startVoiceNote = { [weak self] in self?.startVoiceNote() }
         w.stopVoiceNote = { [weak self] in self?.stopVoiceNote() }
         return w
