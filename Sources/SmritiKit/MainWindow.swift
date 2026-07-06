@@ -29,15 +29,22 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
     /// index-aligned with the loader's (title, body) rows.
     private var meetingSnapshots: [Store.Snapshot] = []
     private lazy var meetingDetailView = MeetingDetailView(
-        store: store, onItemsChanged: {})
+        store: store,
+        onItemsChanged: { [weak self] in self?.meetingsSection.reloadBadge() })
 
-    private lazy var meetingsSection = MasterDetailSection(
+    private lazy var meetingsList = MasterDetailSection(
         title: "Meetings", symbol: "waveform",
         empty: "No recordings yet. Click “Record voice note” above to capture and transcribe one, or Smriti will ask before recording a call.",
         loader: { [weak self, store] in
             let snaps = (try? store.listMeetings(limit: 200)) ?? []
             self?.meetingSnapshots = snaps
             return snaps.map { ($0.windowTitle, $0.content) }
+        })
+
+    private lazy var meetingsSection = MeetingsSection(
+        store: store, list: meetingsList,
+        rowForSnapshot: { [weak self] id in
+            self?.meetingSnapshots.firstIndex { $0.id == id }
         })
 
     private lazy var sections: [MainSection] = [
@@ -64,7 +71,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         self.store = store
         self.config = config
         super.init()
-        meetingsSection.recordControls = MasterDetailSection.RecordControls(
+        meetingsList.recordControls = MasterDetailSection.RecordControls(
             enabled: MeetingWatcher.voiceNotesEnabled,
             isActive: { [weak self] in self?.isRecordingVoiceNote() ?? false },
             toggle: { [weak self] in
@@ -72,7 +79,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
                 if self.isRecordingVoiceNote() { self.stopVoiceNote() } else { self.startVoiceNote() }
             },
             level: { [weak self] in self?.voiceNoteLevel() ?? 0 })
-        meetingsSection.detailProvider = { [weak self] index in
+        meetingsList.detailProvider = { [weak self] index in
             guard let self, index >= 0, index < self.meetingSnapshots.count
             else { return nil }
             self.meetingDetailView.show(snapshot: self.meetingSnapshots[index])
