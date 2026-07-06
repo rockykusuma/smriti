@@ -744,6 +744,7 @@ final class SettingsSection: NSObject, MainSection {
     private let apiKeyStatusLabel = NSTextField(labelWithString: "")
     private var apiKeyRow: NSStackView?
     private let redactCheckbox = NSButton()
+    private let autoRecordCheckbox = NSButton()
     private let statusLabel = NSTextField(labelWithString: "")
     private let loginStatusLabel = NSTextField(labelWithString: "")
     private let loginButton = NSButton()
@@ -826,6 +827,19 @@ final class SettingsSection: NSObject, MainSection {
         redactNote.textColor = .tertiaryLabelColor
         redactNote.preferredMaxLayoutWidth = 520
 
+        autoRecordCheckbox.setButtonType(.switch)
+        autoRecordCheckbox.title = "Detect calls automatically and offer to record them"
+        autoRecordCheckbox.target = self
+        autoRecordCheckbox.action = #selector(toggledAutoRecord)
+        autoRecordCheckbox.state = config.autoRecordMeetings ? .on : .off
+        let autoRecordNote = NSTextField(wrappingLabelWithString:
+            "When on, Smriti asks to record when a call app (Zoom, Teams, WhatsApp, "
+            + "Meet…) is in use. Turn off if dictation tools keep triggering it — you "
+            + "can still record manually from the Meetings tab.")
+        autoRecordNote.font = .systemFont(ofSize: 11)
+        autoRecordNote.textColor = .tertiaryLabelColor
+        autoRecordNote.preferredMaxLayoutWidth = 520
+
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.maximumNumberOfLines = 3
@@ -864,6 +878,7 @@ final class SettingsSection: NSObject, MainSection {
             modelLabel, modelPopup,
             statusLabel, note,
             privacyHeading, redactCheckbox, redactNote,
+            autoRecordCheckbox, autoRecordNote,
             cliHeading, loginStatusLabel, loginRow,
         ])
         stack.orientation = .vertical
@@ -877,7 +892,8 @@ final class SettingsSection: NSObject, MainSection {
         stack.setCustomSpacing(20, after: modelPopup)
         stack.setCustomSpacing(24, after: note)
         stack.setCustomSpacing(8, after: privacyHeading)
-        stack.setCustomSpacing(24, after: redactNote)
+        stack.setCustomSpacing(16, after: redactNote)
+        stack.setCustomSpacing(24, after: autoRecordNote)
         stack.setCustomSpacing(8, after: cliHeading)
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
@@ -948,6 +964,7 @@ final class SettingsSection: NSObject, MainSection {
         backendPopup.selectItem(
             at: SettingsSection.backendKeys.firstIndex(of: config.assistBackend) ?? 0)
         redactCheckbox.state = config.redactRemoteEgress ? .on : .off
+        autoRecordCheckbox.state = config.autoRecordMeetings ? .on : .off
 
         let cloudVisible = config.assistBackend == "cloud" || config.assistBackend == "auto"
         providerLabel.isHidden = !cloudVisible
@@ -1085,6 +1102,12 @@ final class SettingsSection: NSObject, MainSection {
 
     @objc private func toggledRedaction() {
         config.redactRemoteEgress = (redactCheckbox.state == .on)
+        try? config.save()
+        onChange(config)
+    }
+
+    @objc private func toggledAutoRecord() {
+        config.autoRecordMeetings = (autoRecordCheckbox.state == .on)
         try? config.save()
         onChange(config)
     }

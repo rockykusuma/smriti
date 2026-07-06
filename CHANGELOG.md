@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Meeting detection no longer misfires on dictation.** The watcher can't tell
+  which app opened the mic, so it used to prompt on *any* sustained mic use —
+  including dictation tools (omwhisper, Wispr, etc.). It now only offers to
+  record when there's real evidence of a call. Dedicated call apps (FaceTime,
+  Zoom) count on presence; persistently-running apps (WhatsApp, Slack, Teams,
+  Discord, Webex) require proof — a call-titled window or the app being
+  frontmost when the mic starts — so merely having WhatsApp open in the
+  background while dictating no longer triggers a prompt. Browser meetings are
+  matched by known sites (Meet, Zoom, Teams, Whereby, Jitsi, WhatsApp Web,
+  FaceTime web…). New setting
+  "Detect calls automatically and offer to record them" (`autoRecordMeetings`,
+  Settings > Privacy) turns auto-detection off entirely — manual voice notes
+  still work.
+
 - **`Scripts/build-app.sh` — run the menu bar as a real `.app` bundle.** On
   recent macOS, Microphone and Speech Recognition are granted only to bundled
   apps; a bare CLI binary that requests them is aborted by TCC even when signed
