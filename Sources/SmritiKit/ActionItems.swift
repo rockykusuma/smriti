@@ -35,4 +35,30 @@ enum ActionItems {
         }
         return items
     }
+
+    /// Parse `content` and persist the items for one meeting. Idempotent
+    /// (delete + re-insert). Failures are logged, never thrown — extraction
+    /// must not break the save path.
+    static func extract(store: Store, snapshotId: Int64, content: String) {
+        do {
+            try store.replaceActionItems(snapshotId: snapshotId, texts: parse(content))
+        } catch {
+            fputs("smriti action-items: extract failed for #\(snapshotId): \(error)\n", stderr)
+        }
+    }
+
+    /// One-time pass over meetings recorded before extraction existed. Only
+    /// touches meetings with no extracted rows, so checked-off state on
+    /// already-extracted meetings survives.
+    static func backfill(store: Store) {
+        guard let ids = try? store.meetingIdsWithoutActionItems(), !ids.isEmpty else { return }
+        for id in ids {
+            guard let snap = try? store.getSnapshot(id: id) else {
+                fputs("smriti action-items: backfill skipped #\(id) (unreadable)\n", stderr)
+                continue
+            }
+            extract(store: store, snapshotId: id, content: snap.content)
+        }
+        fputs("smriti action-items: backfill scanned \(ids.count) meeting(s)\n", stderr)
+    }
 }

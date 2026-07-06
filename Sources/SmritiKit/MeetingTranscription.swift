@@ -50,6 +50,7 @@ public enum MeetingTranscription {
             transcript: Transcriber.transcript(inDirectory: dir))
 
         try store.updateContent(id: row.id, content: transcript)
+        ActionItems.extract(store: store, snapshotId: row.id, content: transcript)
         return Result(id: row.id, title: row.windowTitle, transcript: transcript)
     }
 }
