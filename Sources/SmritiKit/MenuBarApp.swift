@@ -77,10 +77,10 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 systemSymbolName: generating ? "ellipsis.bubble" : "brain",
                 accessibilityDescription: "Smriti")
             self?.statusItem.button?.image?.isTemplate = true
-            if !generating { self?.hideDraftHUD() }
+            if !generating { self?.draftHUD.hide() }
         }
         // Show the caret-anchored "drafting…" pill once the target field is known.
-        assist.draftAnchor = { [weak self] caret in self?.showDraftHUD(anchor: caret) }
+        assist.draftAnchor = { [weak self] caret in self?.draftHUD.show(anchor: caret) }
         configureAssistBackends(config)
         assist.start()
 
@@ -340,91 +340,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Drafting indicator (a small pill at the text caret)
-
-    private let draftLabel = NSTextField(labelWithString: "")
-    private var draftDotsTimer: Timer?
-    private var draftDotPhase = 0
-
-    /// A compact "Smriti drafting…" pill shown right where text will appear,
-    /// so the feedback is at the cursor rather than off in a corner.
-    private lazy var draftHUD: NSPanel = {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 196, height: 30),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: true)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        let effect = NSVisualEffectView(frame: panel.contentRect(forFrameRect: panel.frame))
-        effect.material = .hudWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 8
-        effect.layer?.masksToBounds = true
-
-        draftLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        draftLabel.textColor = .labelColor
-        draftLabel.frame = NSRect(x: 10, y: 6, width: 176, height: 18)
-        effect.addSubview(draftLabel)
-        panel.contentView = effect
-        return panel
-    }()
-
-    private func showDraftHUD(anchor: CGRect?) {
-        positionDraftHUD(anchor: anchor)
-        draftDotPhase = 0
-        updateDraftLabel()
-        draftHUD.orderFrontRegardless()
-        draftDotsTimer?.invalidate()
-        draftDotsTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) {
-            [weak self] _ in
-            guard let self else { return }
-            self.draftDotPhase = (self.draftDotPhase + 1) % 4
-            self.updateDraftLabel()
-        }
-    }
-
-    private func hideDraftHUD() {
-        draftDotsTimer?.invalidate()
-        draftDotsTimer = nil
-        draftHUD.orderOut(nil)
-    }
-
-    private func updateDraftLabel() {
-        // Pad to a fixed 3-dot width so the trailing hint doesn't jitter.
-        let dots = String(repeating: ".", count: draftDotPhase)
-            + String(repeating: " ", count: 3 - draftDotPhase)
-        draftLabel.stringValue = "🧠  Smriti drafting\(dots)  ⎋ esc"
-    }
-
-    /// Place the pill just below the caret. AX gives a top-left-origin rect;
-    /// flip it into Cocoa's bottom-left space, fall back to the mouse, and
-    /// clamp onto the screen it lands on.
-    private func positionDraftHUD(anchor: CGRect?) {
-        let size = draftHUD.frame.size
-        var origin: NSPoint
-        if let ax = anchor {
-            // AX rect is top-left origin; place the pill just above the anchor's
-            // top edge, left-aligned to it, in Cocoa's bottom-left space.
-            let primaryH = NSScreen.screens.first?.frame.height ?? 0
-            let topEdgeCocoaY = primaryH - ax.origin.y
-            origin = NSPoint(x: ax.origin.x, y: topEdgeCocoaY + 4)
-        } else {
-            let m = NSEvent.mouseLocation
-            origin = NSPoint(x: m.x + 12, y: m.y + 10)
-        }
-        let screen = NSScreen.screens.first { $0.frame.contains(origin) } ?? NSScreen.main
-        if let vf = screen?.visibleFrame {
-            origin.x = min(max(origin.x, vf.minX + 4), vf.maxX - size.width - 4)
-            origin.y = min(max(origin.y, vf.minY + 4), vf.maxY - size.height - 4)
-        }
-        draftHUD.setFrameOrigin(origin)
-    }
+    private let draftHUD = DraftHUD()
 
     // MARK: - Toast (visible feedback for background actions)
 
