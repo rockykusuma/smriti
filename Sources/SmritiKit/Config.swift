@@ -48,6 +48,9 @@ public struct Config: Codable {
     /// machine. Applies to every non-local lane — a cloud provider and Claude;
     /// a localhost Ollama (or a cloud provider pointed at localhost) is exempt.
     public var redactRemoteEgress: Bool = true
+    /// Watch for calls and offer to record them. Off means only manual voice
+    /// notes record — useful if dictation tools keep tripping the detector.
+    public var autoRecordMeetings: Bool = true
 
     public var databasePath: String {
         Config.supportDirectory.appendingPathComponent("smriti.sqlite").path
@@ -109,6 +112,7 @@ public struct Config: Codable {
             partial.cloudProviders.map { config.cloudProviders = $0 }
             partial.cloudExcludedBundleIds.map { config.cloudExcludedBundleIds = $0 }
             partial.redactRemoteEgress.map { config.redactRemoteEgress = $0 }
+            partial.autoRecordMeetings.map { config.autoRecordMeetings = $0 }
             config.ensurePresetProviders()
             try config.save() // rewrite with full key set
             return config
@@ -139,6 +143,7 @@ public struct Config: Codable {
         var cloudProviders: [String: CloudProviderConfig]?
         var cloudExcludedBundleIds: Set<String>?
         var redactRemoteEgress: Bool?
+        var autoRecordMeetings: Bool?
     }
 
     public func save() throws {
