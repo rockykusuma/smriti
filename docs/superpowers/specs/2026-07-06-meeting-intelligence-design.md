@@ -41,12 +41,14 @@ CREATE TABLE IF NOT EXISTS action_items (
 CREATE INDEX IF NOT EXISTS idx_action_items_open ON action_items(done, snapshot_id);
 ```
 
-New column: `snapshots.audio_dir TEXT NOT NULL DEFAULT ''`, added with an
-idempotent `pragma table_info` migration following the existing
-`migrateAddURLColumnIfNeeded` pattern. The recorder and voice-note finalize
-paths write the recording directory path into it. Legacy meetings keep the
-empty default — the detail view simply shows no player for them; no path
-reconstruction is attempted.
+No new column for audio location: **`snapshots.url` already stores the
+recording directory** for both lanes (`recording.directory.absoluteString` in
+`MeetingWatcher.finalize`, `dir.absoluteString` in the voice-note path), and
+`MeetingTranscription.retranscribe` already resolves audio from it. The
+detail view reuses that. Meetings whose `url` is empty or doesn't resolve to
+an existing directory simply show no player; no path reconstruction is
+attempted. *(Amended during planning: the original design called for a new
+`audio_dir` column before discovering `url` already serves this purpose.)*
 
 ## Action-item extraction — `ActionItems.swift` (new)
 
@@ -81,7 +83,7 @@ wiring.
 Replaces the plain-text body when the selected row is a meeting:
 
 1. Metadata header — app name, date, duration (`AVURLAsset` on the audio
-   files; duration hidden when `audio_dir` is empty).
+   files; duration hidden when `url` doesn't resolve to saved audio).
 2. Summary card — rendered with the existing `MarkdownRenderer`.
 3. This meeting's action items, inline with checkboxes.
 4. Player bar (below).
@@ -115,7 +117,7 @@ Replaces the plain-text body when the selected row is a meeting:
 
 - Extraction/parse failures → zero rows, never a crash.
 - Backfill skips failing snapshots, logs to stderr, never blocks the hub.
-- `audio_dir` migration is idempotent (`pragma table_info` check).
+- No schema migration needed for audio (existing `url` column reused).
 - Playback failures hide the bar silently (stderr log only).
 - A failed check-off DB write reverts the checkbox and logs to stderr.
 
@@ -127,7 +129,7 @@ XCTest in `Tests/SmritiKitTests/`, matching existing style:
   heading, mixed `-`/`*`, numbered lists; idempotent re-extraction;
   backfill touches only unextracted meetings.
 - **`StoreTests` additions** — action_items CRUD, done toggle + `done_at`,
-  open-count query, `audio_dir` migration on a legacy DB.
+  open-count query, backfill candidate query.
 - **Player/UI** — no unit tests (AVPlayer + AppKit); manual verification via
   `Scripts/build-app.sh`: record a voice note, play it back, check off an
   item, relaunch and confirm state persisted.
