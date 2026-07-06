@@ -31,6 +31,8 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
+    private var isGenerating = false
+    private var onboardingWindow: OnboardingWindow?
 
     init(store: Store, config: Config) {
         self.store = store
@@ -50,6 +52,12 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Theme.applyAppearance(config.appearanceMode)
+
+        // Show onboarding wizard on first launch
+        if !config.hasCompletedOnboarding {
+            showOnboarding()
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = NSImage(
@@ -73,14 +81,12 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return last.capture
         }
         assist.onGeneratingChange = { [weak self] generating in
-            self?.statusItem.button?.image = NSImage(
-                systemSymbolName: generating ? "ellipsis.bubble" : "brain",
-                accessibilityDescription: "Smriti")
-            self?.statusItem.button?.image?.isTemplate = true
-            if !generating { self?.hideDraftHUD() }
+            self?.isGenerating = generating
+            self?.updateMenuIcon()
+            if !generating { self?.draftHUD.hide() }
         }
         // Show the caret-anchored "drafting…" pill once the target field is known.
-        assist.draftAnchor = { [weak self] caret in self?.showDraftHUD(anchor: caret) }
+        assist.draftAnchor = { [weak self] caret in self?.draftHUD.show(anchor: caret) }
         configureAssistBackends(config)
         assist.start()
 
@@ -156,6 +162,11 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openMain.target = self
         menu.addItem(openMain)
 
+        let recTitle = voiceRecorder.isRecording ? "◼ Stop & save" : "● Record voice note"
+        let recItem = NSMenuItem(title: recTitle, action: #selector(toggleVoiceNoteFromMenu), keyEquivalent: "")
+        recItem.target = self
+        menu.addItem(recItem)
+
         // Fire-and-forget: runs in the background with a notification, so it's
         // worth keeping in the tray even though Home has the same button.
         let chronicle = NSMenuItem(
@@ -166,6 +177,11 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let setup = NSMenuItem(
+            title: "Setup…", action: #selector(showOnboardingFromMenu), keyEquivalent: "")
+        setup.target = self
+        menu.addItem(setup)
+
         let quit = NSMenuItem(
             title: "Quit Smriti", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -174,6 +190,18 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
 
+    private func showOnboarding() {
+        onboardingWindow = OnboardingWindow(config: config) { [weak self] updated in
+            self?.config = updated
+            self?.onboardingWindow = nil
+        }
+        onboardingWindow?.show()
+    }
+
+    @objc private func showOnboardingFromMenu() {
+        showOnboarding()
+    }
+
     @objc private func toggleAssist() {
         assist.setEnabled(!assist.isEnabled)
     }
@@ -181,6 +209,29 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func togglePause() {
         daemon.setPaused(!daemon.isPaused)
         statusItem.button?.appearsDisabled = daemon.isPaused
+    }
+
+    @objc private func toggleVoiceNoteFromMenu() {
+        if voiceRecorder.isRecording {
+            stopVoiceNote()
+        } else {
+            startVoiceNote()
+        }
+    }
+
+    private func updateMenuIcon() {
+        let symbolName: String
+        if voiceRecorder.isRecording {
+            symbolName = "waveform"
+        } else if isGenerating {
+            symbolName = "ellipsis.bubble"
+        } else {
+            symbolName = "brain"
+        }
+        statusItem.button?.image = NSImage(
+            systemSymbolName: symbolName, accessibilityDescription: "Smriti")
+        statusItem.button?.image?.isTemplate = true
+        statusItem.button?.contentTintColor = voiceRecorder.isRecording ? .systemRed : nil
     }
 
     @objc private func excludeLastApp() {
@@ -259,6 +310,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do {
             try voiceRecorder.start()
             NSSound(named: "Pop")?.play()
+            updateMenuIcon()
         } catch {
             fputs("smriti voice-note: could not start: \(error)\n", stderr)
             NSSound.beep()
@@ -268,6 +320,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func stopVoiceNote() {
         guard let result = voiceRecorder.stop() else { return }
         NSSound(named: "Glass")?.play()
+        updateMenuIcon()
         let dir = result.directory
         let startedAt = result.startedAt
         // Transcribe on-device and store as a meeting entry, off the main thread.
@@ -340,151 +393,14 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Drafting indicator (a small pill at the text caret)
+    private let draftHUD = DraftHUD()
 
-    private let draftLabel = NSTextField(labelWithString: "")
-    private var draftDotsTimer: Timer?
-    private var draftDotPhase = 0
-
-    /// A compact "Smriti drafting…" pill shown right where text will appear,
-    /// so the feedback is at the cursor rather than off in a corner.
-    private lazy var draftHUD: NSPanel = {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 196, height: 30),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: true)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        let effect = NSVisualEffectView(frame: panel.contentRect(forFrameRect: panel.frame))
-        effect.material = .hudWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 8
-        effect.layer?.masksToBounds = true
-
-        draftLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        draftLabel.textColor = .labelColor
-        draftLabel.frame = NSRect(x: 10, y: 6, width: 176, height: 18)
-        effect.addSubview(draftLabel)
-        panel.contentView = effect
-        return panel
-    }()
-
-    private func showDraftHUD(anchor: CGRect?) {
-        positionDraftHUD(anchor: anchor)
-        draftDotPhase = 0
-        updateDraftLabel()
-        draftHUD.orderFrontRegardless()
-        draftDotsTimer?.invalidate()
-        draftDotsTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) {
-            [weak self] _ in
-            guard let self else { return }
-            self.draftDotPhase = (self.draftDotPhase + 1) % 4
-            self.updateDraftLabel()
-        }
-    }
-
-    private func hideDraftHUD() {
-        draftDotsTimer?.invalidate()
-        draftDotsTimer = nil
-        draftHUD.orderOut(nil)
-    }
-
-    private func updateDraftLabel() {
-        // Pad to a fixed 3-dot width so the trailing hint doesn't jitter.
-        let dots = String(repeating: ".", count: draftDotPhase)
-            + String(repeating: " ", count: 3 - draftDotPhase)
-        draftLabel.stringValue = "🧠  Smriti drafting\(dots)  ⎋ esc"
-    }
-
-    /// Place the pill just below the caret. AX gives a top-left-origin rect;
-    /// flip it into Cocoa's bottom-left space, fall back to the mouse, and
-    /// clamp onto the screen it lands on.
-    private func positionDraftHUD(anchor: CGRect?) {
-        let size = draftHUD.frame.size
-        var origin: NSPoint
-        if let ax = anchor {
-            // AX rect is top-left origin; place the pill just above the anchor's
-            // top edge, left-aligned to it, in Cocoa's bottom-left space.
-            let primaryH = NSScreen.screens.first?.frame.height ?? 0
-            let topEdgeCocoaY = primaryH - ax.origin.y
-            origin = NSPoint(x: ax.origin.x, y: topEdgeCocoaY + 4)
-        } else {
-            let m = NSEvent.mouseLocation
-            origin = NSPoint(x: m.x + 12, y: m.y + 10)
-        }
-        let screen = NSScreen.screens.first { $0.frame.contains(origin) } ?? NSScreen.main
-        if let vf = screen?.visibleFrame {
-            origin.x = min(max(origin.x, vf.minX + 4), vf.maxX - size.width - 4)
-            origin.y = min(max(origin.y, vf.minY + 4), vf.maxY - size.height - 4)
-        }
-        draftHUD.setFrameOrigin(origin)
-    }
-
-    // MARK: - Toast (visible feedback for background actions)
-
-    private let toastLabel = NSTextField(labelWithString: "")
-    private var toastDismiss: DispatchWorkItem?
-
-    private lazy var toastPanel: NSPanel = {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 240, height: 34),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: true)
-        panel.level = .statusBar
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        let effect = NSVisualEffectView(frame: panel.contentRect(forFrameRect: panel.frame))
-        effect.material = .hudWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 9
-        effect.layer?.masksToBounds = true
-
-        toastLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        toastLabel.textColor = .labelColor
-        toastLabel.lineBreakMode = .byTruncatingTail
-        effect.addSubview(toastLabel)
-        panel.contentView = effect
-        return panel
-    }()
-
-    /// Show a short-lived toast just below the menu bar. Safe from any thread.
-    private func toast(_ message: String) {
-        if !Thread.isMainThread {
-            DispatchQueue.main.async { [weak self] in self?.toast(message) }
-            return
-        }
-        toastLabel.stringValue = message
-        toastLabel.sizeToFit()
-        let width = min(max(toastLabel.frame.width + 28, 140), 520)
-        let height: CGFloat = 34
-        toastPanel.setContentSize(NSSize(width: width, height: height))
-        toastLabel.frame = NSRect(x: 14, y: 8, width: width - 28, height: 18)
-        if let vf = NSScreen.main?.visibleFrame {
-            toastPanel.setFrameOrigin(NSPoint(x: vf.midX - width / 2, y: vf.maxY - height - 8))
-        }
-        toastPanel.orderFrontRegardless()
-
-        toastDismiss?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.toastPanel.orderOut(nil) }
-        toastDismiss = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
-    }
+    private let toast = ToastPanel()
 
     /// Background actions report progress here. Shows a toast (real
     /// notifications aren't available to this unbundled binary) and logs.
     private func notify(title: String, body: String) {
         print("smriti: \(body)")
-        toast(body)
+        toast.show(body)
     }
 }
