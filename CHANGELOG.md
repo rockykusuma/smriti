@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Memory surfacing: Today digest, Search UI, Chronicle timeline.** The sidebar
+  now has three new/enhanced sections for browsing your captured memory without
+  invoking AI. **Today** shows today's chronicle (or a one-click "Write now"
+  button) and an hour-grouped snapshot timeline for the current day. **Search**
+  provides a dedicated search interface with debounced FTS5 queries, clickable
+  results that open a snapshot viewer, and a result count. **Chronicles** is
+  enhanced with a split-view day browser — day list on the left, chronicle
+  markdown + hour-grouped snapshots on the right. Shared components:
+  `SnapshotRowView` (reusable snapshot row with app icon, title, preview) and
+  `TimelineHelpers.groupByHour` (hour-bucketing utility). Sidebar order is now
+  Ask → Today → Search → Chronicles → Meetings → Overview → Settings.
+
 - **Meeting intelligence: action-items hub, audio playback, structured detail.**
   The Meetings pane gains a "Meetings | Action items" switch. Action items are
   parsed out of each meeting's generated summary into a checkable list grouped
