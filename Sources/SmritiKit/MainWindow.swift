@@ -25,13 +25,19 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private let contentContainer = ThemedView(frame: .zero)
     private var currentView: NSView?
 
+    /// Snapshot cache backing the Meetings list — keeps the detail provider
+    /// index-aligned with the loader's (title, body) rows.
+    private var meetingSnapshots: [Store.Snapshot] = []
+    private lazy var meetingDetailView = MeetingDetailView(
+        store: store, onItemsChanged: {})
+
     private lazy var meetingsSection = MasterDetailSection(
         title: "Meetings", symbol: "waveform",
         empty: "No recordings yet. Click “Record voice note” above to capture and transcribe one, or Smriti will ask before recording a call.",
-        loader: { [store] in
-            (try? store.listMeetings(limit: 200))?.map {
-                ($0.windowTitle, $0.content)
-            } ?? []
+        loader: { [weak self, store] in
+            let snaps = (try? store.listMeetings(limit: 200)) ?? []
+            self?.meetingSnapshots = snaps
+            return snaps.map { ($0.windowTitle, $0.content) }
         })
 
     private lazy var sections: [MainSection] = [
@@ -66,6 +72,12 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
                 if self.isRecordingVoiceNote() { self.stopVoiceNote() } else { self.startVoiceNote() }
             },
             level: { [weak self] in self?.voiceNoteLevel() ?? 0 })
+        meetingsSection.detailProvider = { [weak self] index in
+            guard let self, index >= 0, index < self.meetingSnapshots.count
+            else { return nil }
+            self.meetingDetailView.show(snapshot: self.meetingSnapshots[index])
+            return self.meetingDetailView
+        }
     }
 
     /// Open the window on a given section (0 = Home).
@@ -151,6 +163,8 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     private func selectSection(_ index: Int) {
         guard index >= 0, index < sections.count else { return }
+        meetingDetailView.stopPlayback() // leaving/re-entering a pane
+
         currentView?.removeFromSuperview()
         let section = sections[index]
         let view = section.makeView()
