@@ -32,6 +32,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
     private var isGenerating = false
+    private var onboardingWindow: OnboardingWindow?
 
     init(store: Store, config: Config) {
         self.store = store
@@ -51,6 +52,12 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Theme.applyAppearance(config.appearanceMode)
+
+        // Show onboarding wizard on first launch
+        if !config.hasCompletedOnboarding {
+            showOnboarding()
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = NSImage(
@@ -170,6 +177,11 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let setup = NSMenuItem(
+            title: "Setup…", action: #selector(showOnboardingFromMenu), keyEquivalent: "")
+        setup.target = self
+        menu.addItem(setup)
+
         let quit = NSMenuItem(
             title: "Quit Smriti", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -177,6 +189,18 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Actions
+
+    private func showOnboarding() {
+        onboardingWindow = OnboardingWindow(config: config) { [weak self] updated in
+            self?.config = updated
+            self?.onboardingWindow = nil
+        }
+        onboardingWindow?.show()
+    }
+
+    @objc private func showOnboardingFromMenu() {
+        showOnboarding()
+    }
 
     @objc private func toggleAssist() {
         assist.setEnabled(!assist.isEnabled)
