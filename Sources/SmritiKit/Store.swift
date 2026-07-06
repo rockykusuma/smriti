@@ -72,6 +72,20 @@ public final class Store {
             );
             """)
         try exec("""
+            CREATE TABLE IF NOT EXISTS action_items (
+                id          INTEGER PRIMARY KEY,
+                snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+                text        TEXT NOT NULL,
+                done        INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL,
+                done_at     TEXT
+            );
+            """)
+        try exec("""
+            CREATE INDEX IF NOT EXISTS idx_action_items_open
+            ON action_items(done, snapshot_id);
+            """)
+        try exec("""
             CREATE VIRTUAL TABLE IF NOT EXISTS snapshots_fts USING fts5(
                 content, window_title, app,
                 content=snapshots, content_rowid=id
@@ -282,11 +296,136 @@ public final class Store {
         let stmt = try prepare("""
             SELECT id, app, bundle_id, window_title, content, url, captured_at, last_seen_at
             FROM snapshots WHERE bundle_id = 'sh.smriti.meeting'
-            ORDER BY last_seen_at DESC LIMIT ?;
+            ORDER BY last_seen_at DESC, id DESC LIMIT ?;
             """)
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int(stmt, 1, Int32(limit))
         return readSnapshots(stmt)
+    }
+
+    // MARK: - Action items
+
+    public struct ActionItem {
+        public let id: Int64
+        public let snapshotId: Int64
+        public let text: String
+        public let done: Bool
+        public let createdAt: String
+        public let doneAt: String?
+    }
+
+    /// Replace a meeting's extracted action items (delete + re-insert), so
+    /// extraction is idempotent per snapshot.
+    public func replaceActionItems(snapshotId: Int64, texts: [String]) throws {
+        let del = try prepare("DELETE FROM action_items WHERE snapshot_id = ?;")
+        defer { sqlite3_finalize(del) }
+        sqlite3_bind_int64(del, 1, snapshotId)
+        guard sqlite3_step(del) == SQLITE_DONE else {
+            throw StoreError.stepFailed(message: lastErrorMessage())
+        }
+        for text in texts {
+            let ins = try prepare("""
+                INSERT INTO action_items (snapshot_id, text, done, created_at)
+                VALUES (?, ?, 0, ?);
+                """)
+            defer { sqlite3_finalize(ins) }
+            sqlite3_bind_int64(ins, 1, snapshotId)
+            sqlite3_bind_text(ins, 2, text, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(ins, 3, Store.timestamp(), -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(ins) == SQLITE_DONE else {
+                throw StoreError.stepFailed(message: lastErrorMessage())
+            }
+        }
+    }
+
+    /// One meeting's items, in extraction order.
+    public func actionItems(snapshotId: Int64) throws -> [ActionItem] {
+        let stmt = try prepare("""
+            SELECT id, snapshot_id, text, done, created_at, done_at
+            FROM action_items WHERE snapshot_id = ? ORDER BY id;
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, snapshotId)
+        return readActionItems(stmt)
+    }
+
+    /// Items across all meetings joined with the meeting title, newest
+    /// meeting first. `includeDone: false` returns only open items.
+    public func allActionItems(includeDone: Bool) throws
+        -> [(item: ActionItem, meetingTitle: String)] {
+        let stmt = try prepare("""
+            SELECT ai.id, ai.snapshot_id, ai.text, ai.done, ai.created_at, ai.done_at,
+                   s.window_title
+            FROM action_items ai JOIN snapshots s ON s.id = ai.snapshot_id
+            WHERE ? OR ai.done = 0
+            ORDER BY s.last_seen_at DESC, s.id DESC, ai.id ASC;
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, includeDone ? 1 : 0)
+        var rows: [(item: ActionItem, meetingTitle: String)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            rows.append((readActionItem(stmt), columnText(stmt, 6) ?? ""))
+        }
+        return rows
+    }
+
+    public func setActionItemDone(id: Int64, done: Bool) throws {
+        let stmt = try prepare(
+            "UPDATE action_items SET done = ?, done_at = ? WHERE id = ?;")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, done ? 1 : 0)
+        if done {
+            sqlite3_bind_text(stmt, 2, Store.timestamp(), -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 2)
+        }
+        sqlite3_bind_int64(stmt, 3, id)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw StoreError.stepFailed(message: lastErrorMessage())
+        }
+    }
+
+    /// Open (not done) item count — for the hub's segment badge.
+    public func openActionItemCount() throws -> Int {
+        let stmt = try prepare("SELECT COUNT(*) FROM action_items WHERE done = 0;")
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    /// Meetings that have never had items extracted — backfill candidates.
+    public func meetingIdsWithoutActionItems() throws -> [Int64] {
+        let stmt = try prepare("""
+            SELECT id FROM snapshots
+            WHERE bundle_id = 'sh.smriti.meeting'
+              AND id NOT IN (SELECT DISTINCT snapshot_id FROM action_items)
+            ORDER BY id;
+            """)
+        defer { sqlite3_finalize(stmt) }
+        var ids: [Int64] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            ids.append(sqlite3_column_int64(stmt, 0))
+        }
+        return ids
+    }
+
+    private func readActionItems(_ stmt: OpaquePointer?) -> [ActionItem] {
+        var rows: [ActionItem] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            rows.append(readActionItem(stmt))
+        }
+        return rows
+    }
+
+    /// Columns must be: id, snapshot_id, text, done, created_at, done_at.
+    private func readActionItem(_ stmt: OpaquePointer?) -> ActionItem {
+        ActionItem(
+            id: sqlite3_column_int64(stmt, 0),
+            snapshotId: sqlite3_column_int64(stmt, 1),
+            text: columnText(stmt, 2) ?? "",
+            done: sqlite3_column_int(stmt, 3) != 0,
+            createdAt: columnText(stmt, 4) ?? "",
+            doneAt: columnText(stmt, 5))
     }
 
     /// Snapshot count for one local day (YYYY-MM-DD) — cheap, for UI.

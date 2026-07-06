@@ -293,6 +293,9 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     windowTitle: title,
                     content: transcript,
                     url: dir.absoluteString)
+                if let id = (try? store.listMeetings(limit: 1))?.first?.id {
+                    ActionItems.extract(store: store, snapshotId: id, content: transcript)
+                }
                 fputs("smriti voice-note: stored — \(title)\n", stderr)
             } catch {
                 fputs("smriti voice-note: store failed: \(error)\n", stderr)

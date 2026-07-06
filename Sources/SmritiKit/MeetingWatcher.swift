@@ -351,6 +351,9 @@ public final class MeetingWatcher {
                     windowTitle: title,
                     content: transcript,
                     url: recording.directory.absoluteString)
+                if let id = (try? store.listMeetings(limit: 1))?.first?.id {
+                    ActionItems.extract(store: store, snapshotId: id, content: transcript)
+                }
                 fputs("smriti meetings: transcript stored — \(title)\n", stderr)
                 NSSound(named: "Glass")?.play()
             } catch {

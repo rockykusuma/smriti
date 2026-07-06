@@ -25,13 +25,26 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
     private let contentContainer = ThemedView(frame: .zero)
     private var currentView: NSView?
 
-    private lazy var meetingsSection = MasterDetailSection(
+    /// Snapshot cache backing the Meetings list — keeps the detail provider
+    /// index-aligned with the loader's (title, body) rows.
+    private var meetingSnapshots: [Store.Snapshot] = []
+    private lazy var meetingDetailView = MeetingDetailView(
+        store: store,
+        onItemsChanged: { [weak self] in self?.meetingsSection.reloadBadge() })
+
+    private lazy var meetingsList = MasterDetailSection(
         title: "Meetings", symbol: "waveform",
         empty: "No recordings yet. Click “Record voice note” above to capture and transcribe one, or Smriti will ask before recording a call.",
-        loader: { [store] in
-            (try? store.listMeetings(limit: 200))?.map {
-                ($0.windowTitle, $0.content)
-            } ?? []
+        loader: { [weak self, store] in
+            let snaps = (try? store.listMeetings(limit: 200)) ?? []
+            self?.meetingSnapshots = snaps
+            return snaps.map { ($0.windowTitle, $0.content) }
+        })
+
+    private lazy var meetingsSection = MeetingsSection(
+        store: store, list: meetingsList,
+        rowForSnapshot: { [weak self] id in
+            self?.meetingSnapshots.firstIndex { $0.id == id }
         })
 
     private lazy var sections: [MainSection] = [
@@ -58,7 +71,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         self.store = store
         self.config = config
         super.init()
-        meetingsSection.recordControls = MasterDetailSection.RecordControls(
+        meetingsList.recordControls = MasterDetailSection.RecordControls(
             enabled: MeetingWatcher.voiceNotesEnabled,
             isActive: { [weak self] in self?.isRecordingVoiceNote() ?? false },
             toggle: { [weak self] in
@@ -66,6 +79,12 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
                 if self.isRecordingVoiceNote() { self.stopVoiceNote() } else { self.startVoiceNote() }
             },
             level: { [weak self] in self?.voiceNoteLevel() ?? 0 })
+        meetingsList.detailProvider = { [weak self] index in
+            guard let self, index >= 0, index < self.meetingSnapshots.count
+            else { return nil }
+            self.meetingDetailView.show(snapshot: self.meetingSnapshots[index])
+            return self.meetingDetailView
+        }
     }
 
     /// Open the window on a given section (0 = Home).
@@ -151,6 +170,8 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
 
     private func selectSection(_ index: Int) {
         guard index >= 0, index < sections.count else { return }
+        meetingDetailView.stopPlayback() // leaving/re-entering a pane
+
         currentView?.removeFromSuperview()
         let section = sections[index]
         let view = section.makeView()
@@ -236,6 +257,13 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
     private var rows: [(title: String, body: String)] = []
     private var view: NSView?
 
+    /// When set, a row can supply its own detail view (used by Meetings for
+    /// the structured meeting detail). Return nil to fall back to the default
+    /// title + markdown text rendering.
+    var detailProvider: ((Int) -> NSView?)?
+    private let detailContainer = NSView()
+    private var textScroll: NSScrollView?
+
     /// Optional record bar shown above the list (used by Meetings for manual
     /// voice notes). `isActive`/`toggle` drive a single Start/Stop button.
     struct RecordControls {
@@ -317,12 +345,16 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         listScroll.drawsBackground = false
         listScroll.autoresizingMask = [.height]
 
-        let textScroll = MasterDetailSection.makeTextScroll(text,
+        let scroll = MasterDetailSection.makeTextScroll(text,
             frame: NSRect(x: 261, y: 0, width: 478, height: 620))
-        textScroll.autoresizingMask = [.width, .height]
+        scroll.autoresizingMask = [.width, .height]
+        textScroll = scroll
+        detailContainer.frame = scroll.frame
+        detailContainer.autoresizingMask = [.width, .height]
+        setDetail(scroll)
 
         split.addSubview(listScroll)
-        split.addSubview(textScroll)
+        split.addSubview(detailContainer)
         container.addSubview(split)
         split.setPosition(260, ofDividerAt: 0)
 
@@ -394,6 +426,22 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         reloadRows()
     }
 
+    /// Swap the right-hand detail area's content.
+    private func setDetail(_ v: NSView) {
+        guard v.superview !== detailContainer else { return }
+        detailContainer.subviews.forEach { $0.removeFromSuperview() }
+        v.frame = detailContainer.bounds
+        v.autoresizingMask = [.width, .height]
+        detailContainer.addSubview(v)
+    }
+
+    /// Select a list row programmatically (used by jump-to-meeting).
+    func selectRow(_ index: Int) {
+        guard index >= 0, index < rows.count else { return }
+        table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        table.scrollRowToVisible(index)
+    }
+
     /// Reload the list from the loader and refresh the record button. Public so
     /// the owner can call it after an async voice note finishes transcribing.
     func reloadRows() {
@@ -402,6 +450,7 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
         if !rows.isEmpty {
             table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         } else {
+            if let textScroll { setDetail(textScroll) }
             text.string = emptyMessage
         }
         // A finished transcription (store -> reloadMeetings) ends the
@@ -527,6 +576,11 @@ final class MasterDetailSection: NSObject, MainSection, NSTableViewDataSource, N
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard table.selectedRow >= 0, table.selectedRow < rows.count else { return }
+        if let provider = detailProvider, let custom = provider(table.selectedRow) {
+            setDetail(custom)
+            return
+        }
+        if let textScroll { setDetail(textScroll) }
         let row = rows[table.selectedRow]
         let doc = NSMutableAttributedString()
         doc.append(MarkdownRenderer.caption(row.title))

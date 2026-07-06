@@ -91,4 +91,65 @@ final class StoreTests: XCTestCase {
         XCTAssertNotNil(s.oldest)
         XCTAssertNotNil(s.newest)
     }
+
+    // MARK: - Action items
+
+    /// Insert a meeting snapshot and return its id.
+    private func insertMeeting(
+        title: String = "Zoom 2026-07-06 14:00 (30 min)",
+        content: String = "## Summary\n\nTalked.\n\n### Action items\n- Ship it\n\n---\n\ntranscript"
+    ) throws -> Int64 {
+        try store.upsert(
+            app: "Meeting", bundleId: "sh.smriti.meeting",
+            windowTitle: title, content: content)
+        return try XCTUnwrap(store.listMeetings(limit: 1).first?.id)
+    }
+
+    func testReplaceAndListActionItems() throws {
+        let id = try insertMeeting()
+        try store.replaceActionItems(snapshotId: id, texts: ["Ship it", "Email Bob"])
+        let items = try store.actionItems(snapshotId: id)
+        XCTAssertEqual(items.map(\.text), ["Ship it", "Email Bob"])
+        XCTAssertTrue(items.allSatisfy { !$0.done && $0.doneAt == nil })
+    }
+
+    func testReplaceActionItemsIsIdempotent() throws {
+        let id = try insertMeeting()
+        try store.replaceActionItems(snapshotId: id, texts: ["Ship it"])
+        try store.replaceActionItems(snapshotId: id, texts: ["Ship it"])
+        XCTAssertEqual(try store.actionItems(snapshotId: id).count, 1)
+    }
+
+    func testSetActionItemDoneTogglesDoneAt() throws {
+        let id = try insertMeeting()
+        try store.replaceActionItems(snapshotId: id, texts: ["Ship it"])
+        let item = try XCTUnwrap(store.actionItems(snapshotId: id).first)
+        try store.setActionItemDone(id: item.id, done: true)
+        var reread = try XCTUnwrap(store.actionItems(snapshotId: id).first)
+        XCTAssertTrue(reread.done)
+        XCTAssertNotNil(reread.doneAt)
+        try store.setActionItemDone(id: item.id, done: false) // un-check clears
+        reread = try XCTUnwrap(store.actionItems(snapshotId: id).first)
+        XCTAssertFalse(reread.done)
+        XCTAssertNil(reread.doneAt)
+    }
+
+    func testOpenActionItemCountAndAllItemsFilter() throws {
+        let id = try insertMeeting()
+        try store.replaceActionItems(snapshotId: id, texts: ["A", "B"])
+        let first = try XCTUnwrap(store.actionItems(snapshotId: id).first)
+        try store.setActionItemDone(id: first.id, done: true)
+        XCTAssertEqual(try store.openActionItemCount(), 1)
+        XCTAssertEqual(try store.allActionItems(includeDone: false).count, 1)
+        XCTAssertEqual(try store.allActionItems(includeDone: true).count, 2)
+        XCTAssertEqual(try store.allActionItems(includeDone: false).first?.meetingTitle,
+                       "Zoom 2026-07-06 14:00 (30 min)")
+    }
+
+    func testMeetingIdsWithoutActionItems() throws {
+        let a = try insertMeeting(title: "Meeting A", content: "content a")
+        let b = try insertMeeting(title: "Meeting B", content: "content b")
+        try store.replaceActionItems(snapshotId: a, texts: ["Ship it"])
+        XCTAssertEqual(try store.meetingIdsWithoutActionItems(), [b])
+    }
 }
