@@ -86,4 +86,42 @@ final class ActionItemsTests: XCTestCase {
         XCTAssertNil(summary)
         XCTAssertEqual(transcript, content)
     }
+
+    // MARK: - extract / backfill (need a store)
+
+    private func makeStore() throws -> Store { try Store(dbPath: ":memory:") }
+
+    private func insertMeeting(_ store: Store, title: String, content: String) throws -> Int64 {
+        try store.upsert(app: "Meeting", bundleId: "sh.smriti.meeting",
+                         windowTitle: title, content: content)
+        return try XCTUnwrap(store.listMeetings(limit: 1).first?.id)
+    }
+
+    func testExtractPersistsAndIsIdempotent() throws {
+        let store = try makeStore()
+        let content = "## Summary\n\nx\n\n### Action items\n- Ship it\n\n---\n\nt"
+        let id = try insertMeeting(store, title: "M", content: content)
+        ActionItems.extract(store: store, snapshotId: id, content: content)
+        ActionItems.extract(store: store, snapshotId: id, content: content)
+        XCTAssertEqual(try store.actionItems(snapshotId: id).map(\.text), ["Ship it"])
+    }
+
+    func testBackfillOnlyTouchesUnextractedMeetings() throws {
+        let store = try makeStore()
+        let contentA = "### Action items\n- From A\n"
+        let contentB = "### Action items\n- From B\n"
+        let a = try insertMeeting(store, title: "A", content: contentA)
+        let b = try insertMeeting(store, title: "B", content: contentB)
+        // Meeting A already extracted — and its item checked off.
+        ActionItems.extract(store: store, snapshotId: a, content: contentA)
+        let itemA = try XCTUnwrap(store.actionItems(snapshotId: a).first)
+        try store.setActionItemDone(id: itemA.id, done: true)
+
+        ActionItems.backfill(store: store)
+
+        // B got extracted; A untouched (done state survives — backfill must
+        // not re-extract and wipe it).
+        XCTAssertEqual(try store.actionItems(snapshotId: b).map(\.text), ["From B"])
+        XCTAssertTrue(try XCTUnwrap(store.actionItems(snapshotId: a).first).done)
+    }
 }
