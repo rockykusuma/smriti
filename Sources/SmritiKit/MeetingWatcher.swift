@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
 import CoreAudio
 import Foundation
@@ -15,6 +16,9 @@ public final class MeetingWatcher {
     /// A manual voice note holds the mic too — returns true while one is
     /// recording, so the watcher doesn't mistake it for a call and prompt.
     var voiceNoteActive: (() -> Bool)?
+    /// When false, the watcher never prompts to record a call (manual voice
+    /// notes still work). Set from Config.autoRecordMeetings.
+    var autoRecordEnabled = true
 
     private let recorder = MeetingRecorder()
     private var pollTimer: Timer?
@@ -29,16 +33,21 @@ public final class MeetingWatcher {
     private var state: State = .idle
     private var micIdleSince: Date?
 
-    /// Apps whose mic use we treat as a meeting/call.
-    static let callerApps: [String: String] = [
-        "com.microsoft.teams2": "Teams",
-        "com.microsoft.teams": "Teams",
-        "us.zoom.xos": "Zoom",
-        "com.apple.FaceTime": "FaceTime",
-        "net.whatsapp.WhatsApp": "WhatsApp",
-        "com.tinyspeck.slackmacgap": "Slack",
-        "com.hnc.Discord": "Discord",
-        "Cisco-Systems.Spark": "Webex",
+    /// Apps whose mic use may indicate a call, mapped to (display name, verify).
+    /// `verify == true` means the app also runs when idle (WhatsApp, Slack,
+    /// Teams, Discord, Webex), so mere presence isn't enough — we require
+    /// evidence of an actual call (a call-titled window, or the app being
+    /// frontmost when the mic starts). `verify == false` apps (FaceTime, Zoom)
+    /// are essentially only mic-active during a call, so running + mic suffices.
+    static let callerApps: [String: (name: String, verify: Bool)] = [
+        "com.microsoft.teams2": ("Teams", true),
+        "com.microsoft.teams": ("Teams", true),
+        "us.zoom.xos": ("Zoom", false),
+        "com.apple.FaceTime": ("FaceTime", false),
+        "net.whatsapp.WhatsApp": ("WhatsApp", true),
+        "com.tinyspeck.slackmacgap": ("Slack", true),
+        "com.hnc.Discord": ("Discord", true),
+        "Cisco-Systems.Spark": ("Webex", true),
     ]
 
     public init(store: Store) {
@@ -135,10 +144,19 @@ public final class MeetingWatcher {
 
         case .micActive(let since):
             guard active else { state = .idle; return }
-            // Debounce: 3s of continuous mic use = a real call, not a blip.
+            // Debounce: 3s of continuous mic use.
             if Date().timeIntervalSince(since) >= 3 {
-                state = .prompting
-                askConsent(appName: currentCallerName())
+                // Only treat this as a call if auto-record is on AND a known
+                // call app / meeting tab is actually present. Otherwise the mic
+                // is being used by something else — most often a dictation tool
+                // (omwhisper, Wispr, etc.) — so stay quiet until it goes idle.
+                if autoRecordEnabled, let call = currentCall() {
+                    state = .prompting
+                    askConsent(appName: call)
+                } else {
+                    fputs("smriti meetings: mic in use but no call app detected (dictation?) — not prompting\n", stderr)
+                    state = .declined
+                }
             }
 
         case .prompting:
@@ -162,20 +180,60 @@ public final class MeetingWatcher {
         }
     }
 
-    private func currentCallerName() -> String {
+    /// Web domains that indicate a live meeting in the browser. (Native
+    /// WhatsApp/FaceTime/Zoom/Teams calls are matched via `callerApps` above;
+    /// these cover their in-browser variants.)
+    static let meetingDomains = ["meet.google", "zoom.us", "teams.microsoft",
+        "teams.live", "whereby.com", "webex.com", "around.co", "meet.jit.si",
+        "web.whatsapp", "call.whatsapp", "facetime.apple"]
+
+    /// The active call's display name, or nil when nothing looks like a call.
+    /// Returning nil (instead of a generic "Call") is what stops dictation and
+    /// other incidental mic use from being treated as a meeting.
+    private func currentCall() -> String? {
         for app in NSWorkspace.shared.runningApplications {
-            if let id = app.bundleIdentifier,
-               let name = MeetingWatcher.callerApps[id] {
-                return name
+            guard let id = app.bundleIdentifier,
+                  let entry = MeetingWatcher.callerApps[id] else { continue }
+            // Persistently-running apps need proof of an actual call — a
+            // call-titled window, or being frontmost when the mic started (you
+            // just clicked Call) — so that having WhatsApp/Slack merely open
+            // while dictating doesn't count.
+            if !entry.verify || app.isActive || MeetingWatcher.looksInCall(app) {
+                return entry.name
             }
         }
-        // Browser meeting (Google Meet etc.) — use the captured URL/title.
+        // Browser meeting — only when the frontmost tab is a known meeting site.
         if let hint = contextHint?(), !hint.url.isEmpty,
            let domain = BrowserURL.domain(of: hint.url) {
             if domain.contains("meet.google") { return "Google Meet" }
-            return domain
+            if MeetingWatcher.meetingDomains.contains(where: { domain.contains($0) }) {
+                return domain
+            }
         }
-        return "Call"
+        return nil
+    }
+
+    /// Best-effort check that `app` is actually in a call: does any of its
+    /// windows have a title that reads like a call? Requires Accessibility
+    /// (which the app bundle has); returns false if the tree can't be read.
+    private static func looksInCall(_ app: NSRunningApplication) -> Bool {
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+                axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement] else { return false }
+        let callWords = ["call", "calling", "ringing", "meeting", "huddle",
+                         "video call", "voice call"]
+        for window in windows {
+            var titleRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                    window, kAXTitleAttribute as CFString, &titleRef) == .success,
+               let title = (titleRef as? String)?.lowercased(),
+               callWords.contains(where: { title.contains($0) }) {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Consent (10 seconds, silence = no)
@@ -248,7 +306,7 @@ public final class MeetingWatcher {
         state = .recording
         micIdleSince = nil
         do {
-            try recorder.start(appName: currentCallerName())
+            try recorder.start(appName: currentCall() ?? "Call")
         } catch {
             fputs("smriti meetings: recorder failed: \(error)\n", stderr)
             state = .declined
