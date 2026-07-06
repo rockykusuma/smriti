@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **First‑launch onboarding wizard.** On first launch, Smriti now shows a
+  four‑step wizard that walks through Accessibility, Microphone, Speech
+  Recognition, and Claude CLI permissions. The wizard can be re‑opened from the
+  menu bar ("Setup…") to re‑check or re‑grant permissions at any time. The
+  completion state is persisted in `config.json` (`hasCompletedOnboarding`).
+
 - **Memory surfacing: Today digest, Search UI, Chronicle timeline.** The sidebar
   now has three new/enhanced sections for browsing your captured memory without
   invoking AI. **Today** shows today's chronicle (or a one-click "Write now"
