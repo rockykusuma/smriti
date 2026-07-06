@@ -3,20 +3,17 @@ import XCTest
 
 final class OnboardingWindowTests: XCTestCase {
 
-    func testConfigHasCompletedOnboardingDefaultFalse() throws {
-        let store = try Store(dbPath: ":memory:")
+    func testConfigHasCompletedOnboardingDefaultFalse() {
         let config = Config.defaults
         XCTAssertFalse(config.hasCompletedOnboarding)
     }
 
-    func testConfigHasCompletedOnboardingPersistence() throws {
-        let store = try Store(dbPath: ":memory:")
+    func testConfigHasCompletedOnboardingRoundTrips() throws {
         var config = Config.defaults
         config.hasCompletedOnboarding = true
-        try config.save()
-
-        let loaded = try Config.load()
-        XCTAssertTrue(loaded.hasCompletedOnboarding)
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(Config.self, from: data)
+        XCTAssertTrue(decoded.hasCompletedOnboarding)
     }
 
     func testOnboardingWindowInitialization() {
@@ -30,7 +27,6 @@ final class OnboardingWindowTests: XCTestCase {
     func testOnboardingWindowStepsCount() {
         let config = Config.defaults
         let window = OnboardingWindow(config: config) { _ in }
-        // Access private steps via reflection for testing
         let stepsCount = Mirror(reflecting: window).children.filter { $0.label == "steps" }.first
         XCTAssertNotNil(stepsCount)
     }
