@@ -31,6 +31,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
+    private var isGenerating = false
 
     init(store: Store, config: Config) {
         self.store = store
@@ -73,10 +74,8 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return last.capture
         }
         assist.onGeneratingChange = { [weak self] generating in
-            self?.statusItem.button?.image = NSImage(
-                systemSymbolName: generating ? "ellipsis.bubble" : "brain",
-                accessibilityDescription: "Smriti")
-            self?.statusItem.button?.image?.isTemplate = true
+            self?.isGenerating = generating
+            self?.updateMenuIcon()
             if !generating { self?.draftHUD.hide() }
         }
         // Show the caret-anchored "drafting…" pill once the target field is known.
@@ -156,6 +155,11 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openMain.target = self
         menu.addItem(openMain)
 
+        let recTitle = voiceRecorder.isRecording ? "◼ Stop & save" : "● Record voice note"
+        let recItem = NSMenuItem(title: recTitle, action: #selector(toggleVoiceNoteFromMenu), keyEquivalent: "")
+        recItem.target = self
+        menu.addItem(recItem)
+
         // Fire-and-forget: runs in the background with a notification, so it's
         // worth keeping in the tray even though Home has the same button.
         let chronicle = NSMenuItem(
@@ -181,6 +185,29 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func togglePause() {
         daemon.setPaused(!daemon.isPaused)
         statusItem.button?.appearsDisabled = daemon.isPaused
+    }
+
+    @objc private func toggleVoiceNoteFromMenu() {
+        if voiceRecorder.isRecording {
+            stopVoiceNote()
+        } else {
+            startVoiceNote()
+        }
+    }
+
+    private func updateMenuIcon() {
+        let symbolName: String
+        if voiceRecorder.isRecording {
+            symbolName = "waveform"
+        } else if isGenerating {
+            symbolName = "ellipsis.bubble"
+        } else {
+            symbolName = "brain"
+        }
+        statusItem.button?.image = NSImage(
+            systemSymbolName: symbolName, accessibilityDescription: "Smriti")
+        statusItem.button?.image?.isTemplate = true
+        statusItem.button?.contentTintColor = voiceRecorder.isRecording ? .systemRed : nil
     }
 
     @objc private func excludeLastApp() {
@@ -259,6 +286,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do {
             try voiceRecorder.start()
             NSSound(named: "Pop")?.play()
+            updateMenuIcon()
         } catch {
             fputs("smriti voice-note: could not start: \(error)\n", stderr)
             NSSound.beep()
@@ -268,6 +296,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func stopVoiceNote() {
         guard let result = voiceRecorder.stop() else { return }
         NSSound(named: "Glass")?.play()
+        updateMenuIcon()
         let dir = result.directory
         let startedAt = result.startedAt
         // Transcribe on-device and store as a meeting entry, off the main thread.
