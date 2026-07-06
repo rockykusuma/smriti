@@ -29,4 +29,19 @@ enum MeetingSummary {
         guard !summary.isEmpty else { return transcript }
         return "## Summary\n\n\(summary)\n\n---\n\n\(transcript)"
     }
+
+    /// Split composed content back into (summary, transcript). Content that
+    /// wasn't composed (no "## Summary" prefix or no "---" rule) comes back
+    /// as (nil, whole content) so the UI just shows a transcript.
+    static func split(_ content: String) -> (summary: String?, transcript: String) {
+        guard content.hasPrefix("## Summary"),
+              let rule = content.range(of: "\n\n---\n\n") else {
+            return (nil, content)
+        }
+        let afterHeading = content.index(content.startIndex, offsetBy: "## Summary".count)
+        let summary = String(content[afterHeading..<rule.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcript = String(content[rule.upperBound...])
+        return (summary.isEmpty ? nil : summary, transcript)
+    }
 }
