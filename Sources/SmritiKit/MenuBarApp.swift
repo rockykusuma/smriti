@@ -87,6 +87,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         meetings = MeetingWatcher(store: store)
         meetings.contextHint = { [weak self] in self?.daemon.lastWindowCapture?.capture }
         meetings.voiceNoteActive = { [weak self] in self?.voiceRecorder.isRecording ?? false }
+        meetings.autoRecordEnabled = config.autoRecordMeetings
         meetings.start()
         // Speech Recognition authorization is a TCC request that aborts unsigned
         // dev builds (same class of crash as the mic check), and it's only
@@ -199,6 +200,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func applySettings(_ updated: Config) {
         config = updated
         configureAssistBackends(updated)
+        meetings?.autoRecordEnabled = updated.autoRecordMeetings
     }
 
     /// Points the assist at its lanes per the configured backend.
