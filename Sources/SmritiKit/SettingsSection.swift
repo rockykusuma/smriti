@@ -39,12 +39,84 @@ final class SettingsSection: NSObject, MainSection {
         heading.font = Theme.serif(26, .semibold)
         heading.textColor = Theme.ink
 
+        // Section: Appearance
+        let appearanceHeader = makeSectionHeader("APPEARANCE")
+        let appearanceCard = makeAppearanceCard()
+
+        // Section: AI Backend
+        let backendHeader = makeSectionHeader("AI BACKEND")
+        let backendCard = makeBackendCard()
+
+        // Section: Privacy & Recording
+        let privacyHeader = makeSectionHeader("PRIVACY & RECORDING")
+        let privacyCard = makePrivacyCard()
+
+        // Section: Account
+        let accountHeader = makeSectionHeader("ACCOUNT")
+        let accountCard = makeAccountCard()
+
+        let stack = NSStackView(views: [
+            heading,
+            appearanceHeader, appearanceCard,
+            backendHeader, backendCard,
+            privacyHeader, privacyCard,
+            accountHeader, accountCard,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setCustomSpacing(20, after: heading)
+        stack.setCustomSpacing(24, after: appearanceCard)
+        stack.setCustomSpacing(24, after: backendCard)
+        stack.setCustomSpacing(24, after: privacyCard)
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 44),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
+        ])
+        view = container
+        return container
+    }
+
+    private func makeSectionHeader(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: "")
+        label.attributedStringValue = Theme.label(text)
+        return label
+    }
+
+    private func makeAppearanceCard() -> NSView {
+        let card = Theme.makeCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
+
         let appearanceLabel = NSTextField(labelWithString: "Appearance")
         appearanceLabel.font = .systemFont(ofSize: 13, weight: .medium)
         appearanceLabel.textColor = Theme.ink
         appearanceControl.selectedSegment = ["system", "light", "dark"].firstIndex(of: config.appearanceMode) ?? 0
         appearanceControl.target = self
         appearanceControl.action = #selector(changedAppearance)
+
+        let stack = NSStackView(views: [appearanceLabel, appearanceControl])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+        ])
+        return card
+    }
+
+    private func makeBackendCard() -> NSView {
+        let card = Theme.makeCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
 
         let backendLabel = NSTextField(labelWithString: "Reply drafts by")
         backendLabel.font = .systemFont(ofSize: 13, weight: .medium)
@@ -87,10 +159,51 @@ final class SettingsSection: NSObject, MainSection {
         apiKeyStatusLabel.maximumNumberOfLines = 2
         apiKeyStatusLabel.preferredMaxLayoutWidth = 520
 
-        // Privacy: redact secrets/PII before anything leaves the machine.
-        let privacyHeading = NSTextField(labelWithString: "Privacy")
-        privacyHeading.font = .systemFont(ofSize: 13, weight: .medium)
-        privacyHeading.textColor = Theme.ink
+        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.maximumNumberOfLines = 3
+        statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.preferredMaxLayoutWidth = 520
+
+        let note = NSTextField(wrappingLabelWithString:
+            "Chronicles, tone learning, and meeting summaries always use Claude. Memory Q&A lives in Claude Desktop via MCP.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .tertiaryLabelColor
+        note.preferredMaxLayoutWidth = 520
+
+        let stack = NSStackView(views: [
+            backendLabel, backendPopup,
+            providerLabel, providerPopup,
+            apiKeyLabel, keyRow, apiKeyStatusLabel,
+            modelLabel, modelPopup,
+            statusLabel, note,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setCustomSpacing(16, after: backendPopup)
+        stack.setCustomSpacing(12, after: apiKeyStatusLabel)
+        stack.setCustomSpacing(20, after: modelPopup)
+
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+            backendPopup.widthAnchor.constraint(equalToConstant: 300),
+            providerPopup.widthAnchor.constraint(equalToConstant: 300),
+            modelPopup.widthAnchor.constraint(equalToConstant: 300),
+            apiKeyField.widthAnchor.constraint(equalToConstant: 220),
+        ])
+        return card
+    }
+
+    private func makePrivacyCard() -> NSView {
+        let card = Theme.makeCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
+
         redactCheckbox.setButtonType(.switch)
         redactCheckbox.title = "Redact secrets & personal info before sending to any remote model"
         redactCheckbox.target = self
@@ -117,21 +230,30 @@ final class SettingsSection: NSObject, MainSection {
         autoRecordNote.textColor = .tertiaryLabelColor
         autoRecordNote.preferredMaxLayoutWidth = 520
 
-        statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.maximumNumberOfLines = 3
-        statusLabel.lineBreakMode = .byWordWrapping
-        statusLabel.preferredMaxLayoutWidth = 520
+        let stack = NSStackView(views: [
+            redactCheckbox, redactNote,
+            autoRecordCheckbox, autoRecordNote,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setCustomSpacing(16, after: redactNote)
 
-        let note = NSTextField(wrappingLabelWithString:
-            "Chronicles, tone learning, and meeting summaries always use Claude. Memory Q&A lives in Claude Desktop via MCP.")
-        note.font = .systemFont(ofSize: 11)
-        note.textColor = .tertiaryLabelColor
-        note.preferredMaxLayoutWidth = 520
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+        ])
+        return card
+    }
 
-        // Claude account: the CLI must be logged in for drafts/chronicles/tone.
-        let cliHeading = NSTextField(labelWithString: "Claude account")
-        cliHeading.font = .systemFont(ofSize: 13, weight: .medium)
+    private func makeAccountCard() -> NSView {
+        let card = Theme.makeCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
+
         loginStatusLabel.font = .systemFont(ofSize: 11)
         loginStatusLabel.textColor = .secondaryLabelColor
         loginStatusLabel.maximumNumberOfLines = 2
@@ -147,45 +269,21 @@ final class SettingsSection: NSObject, MainSection {
         loginRow.spacing = 8
 
         let stack = NSStackView(views: [
-            heading,
-            appearanceLabel, appearanceControl,
-            backendLabel, backendPopup,
-            providerLabel, providerPopup,
-            apiKeyLabel, keyRow, apiKeyStatusLabel,
-            modelLabel, modelPopup,
-            statusLabel, note,
-            privacyHeading, redactCheckbox, redactNote,
-            autoRecordCheckbox, autoRecordNote,
-            cliHeading, loginStatusLabel, loginRow,
+            loginStatusLabel, loginRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(20, after: heading)
-        stack.setCustomSpacing(20, after: appearanceControl)
-        stack.setCustomSpacing(16, after: backendPopup)
-        stack.setCustomSpacing(12, after: apiKeyStatusLabel)
-        stack.setCustomSpacing(20, after: modelPopup)
-        stack.setCustomSpacing(24, after: note)
-        stack.setCustomSpacing(8, after: privacyHeading)
-        stack.setCustomSpacing(16, after: redactNote)
-        stack.setCustomSpacing(24, after: autoRecordNote)
-        stack.setCustomSpacing(8, after: cliHeading)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 739, height: 620))
-        container.addSubview(stack)
+        card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 44),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
-            backendPopup.widthAnchor.constraint(equalToConstant: 300),
-            providerPopup.widthAnchor.constraint(equalToConstant: 300),
-            modelPopup.widthAnchor.constraint(equalToConstant: 300),
-            apiKeyField.widthAnchor.constraint(equalToConstant: 220),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
         ])
-        view = container
-        return container
+        return card
     }
 
     func willAppear() {
