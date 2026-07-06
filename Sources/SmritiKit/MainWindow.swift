@@ -1,9 +1,8 @@
 import AppKit
 import Foundation
 
-/// The main Smriti window: a sidebar (Home, Meetings, Search, Chronicles,
-/// Settings) that swaps a content view. Replaces the old standalone Meetings
-/// and Settings windows.
+/// The main Smriti window: a sidebar (Ask, Today, Search, Chronicles,
+/// Meetings, Overview, Settings) that swaps a content view.
 public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
     private let store: Store
@@ -47,15 +46,13 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
             self?.meetingSnapshots.firstIndex { $0.id == id }
         })
 
+    private lazy var todaySection = TodaySection(store: store)
+
     private lazy var sections: [MainSection] = [
         AskSection(store: store),
-        MasterDetailSection(title: "Chronicles", symbol: "calendar",
-                            empty: "No chronicles yet. Write one from Overview or the menu bar.",
-                            loader: { [store] in
-                                (try? store.listChronicles(limit: 200))?.map {
-                                    ($0.day, $0.summary)
-                                } ?? []
-                            }),
+        todaySection,
+        SearchSection(store: store),
+        ChronicleTimelineSection(store: store),
         meetingsSection,
         HomeSection(store: store, owner: self),
         SettingsSection(config: config, onChange: { [weak self] c in
@@ -71,6 +68,7 @@ public final class MainWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         self.store = store
         self.config = config
         super.init()
+        todaySection.writeChronicleNow = { [weak self] in self?.writeChronicleNow() }
         meetingsList.recordControls = MasterDetailSection.RecordControls(
             enabled: MeetingWatcher.voiceNotesEnabled,
             isActive: { [weak self] in self?.isRecordingVoiceNote() ?? false },
