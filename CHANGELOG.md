@@ -8,6 +8,13 @@
   menu bar ("Setup…") to re‑check or re‑grant permissions at any time. The
   completion state is persisted in `config.json` (`hasCompletedOnboarding`).
 
+- **Settings reorganized into grouped cards.** The Settings pane now groups
+  controls into visual cards: Appearance, AI Backend, Privacy & Recording,
+  and Account. Each section uses `Theme.makeCard()` for visual separation.
+
+- **Menu bar quick actions.** "Record voice note" menu item for one‑click
+  recording. Live recording indicator on menu bar icon (waveform + red tint).
+
 - **Memory surfacing: Today digest, Search UI, Chronicle timeline.** The sidebar
   now has three new/enhanced sections for browsing your captured memory without
   invoking AI. **Today** shows today's chronicle (or a one-click "Write now"
