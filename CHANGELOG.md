@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Meeting intelligence: action-items hub, audio playback, structured detail.**
+  The Meetings pane gains a "Meetings | Action items" switch. Action items are
+  parsed out of each meeting's generated summary into a checkable list grouped
+  by meeting (newest first, open count on the segment label, click-through to
+  the source meeting); items from meetings recorded before this feature are
+  backfilled on first open. Selecting a meeting now shows a structured detail
+  view — title, summary card, that meeting's items inline, and the transcript
+  collapsed behind "Show transcript" — instead of one long text blob. Saved
+  recordings finally play: a player bar merges the call's two tracks
+  (`them.caf` + `me.caf`) so both sides play together, with scrubbing and
+  1×/1.5×/2× speed. Check-off only by design — no manual items, no due dates.
+
 - **Meeting detection no longer misfires on dictation.** The watcher can't tell
   which app opened the mic, so it used to prompt on *any* sustained mic use —
   including dictation tools (omwhisper, Wispr, etc.). It now only offers to
