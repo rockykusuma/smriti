@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **First‑launch onboarding wizard.** On first launch, Smriti now shows a
+  four‑step wizard that walks through Accessibility, Microphone, Speech
+  Recognition, and Claude CLI permissions. The wizard can be re‑opened from the
+  menu bar ("Setup…") to re‑check or re‑grant permissions at any time. The
+  completion state is persisted in `config.json` (`hasCompletedOnboarding`).
+
+- **Settings reorganized into grouped cards.** The Settings pane now groups
+  controls into visual cards: Appearance, AI Backend, Privacy & Recording,
+  and Account. Each section uses `Theme.makeCard()` for visual separation.
+
+- **Menu bar quick actions.** "Record voice note" menu item for one‑click
+  recording. Live recording indicator on menu bar icon (waveform + red tint).
+
+- **Memory surfacing: Today digest, Search UI, Chronicle timeline.** The sidebar
+  now has three new/enhanced sections for browsing your captured memory without
+  invoking AI. **Today** shows today's chronicle (or a one-click "Write now"
+  button) and an hour-grouped snapshot timeline for the current day. **Search**
+  provides a dedicated search interface with debounced FTS5 queries, clickable
+  results that open a snapshot viewer, and a result count. **Chronicles** is
+  enhanced with a split-view day browser — day list on the left, chronicle
+  markdown + hour-grouped snapshots on the right. Shared components:
+  `SnapshotRowView` (reusable snapshot row with app icon, title, preview) and
+  `TimelineHelpers.groupByHour` (hour-bucketing utility). Sidebar order is now
+  Ask → Today → Search → Chronicles → Meetings → Overview → Settings.
+
 - **Meeting intelligence: action-items hub, audio playback, structured detail.**
   The Meetings pane gains a "Meetings | Action items" switch. Action items are
   parsed out of each meeting's generated summary into a checkable list grouped

@@ -51,6 +51,8 @@ public struct Config: Codable {
     /// Watch for calls and offer to record them. Off means only manual voice
     /// notes record — useful if dictation tools keep tripping the detector.
     public var autoRecordMeetings: Bool = true
+    /// Whether the first-launch onboarding wizard has been completed.
+    public var hasCompletedOnboarding: Bool = false
 
     public var databasePath: String {
         Config.supportDirectory.appendingPathComponent("smriti.sqlite").path
@@ -113,6 +115,7 @@ public struct Config: Codable {
             partial.cloudExcludedBundleIds.map { config.cloudExcludedBundleIds = $0 }
             partial.redactRemoteEgress.map { config.redactRemoteEgress = $0 }
             partial.autoRecordMeetings.map { config.autoRecordMeetings = $0 }
+            partial.hasCompletedOnboarding.map { config.hasCompletedOnboarding = $0 }
             config.ensurePresetProviders()
             try config.save() // rewrite with full key set
             return config
@@ -144,6 +147,7 @@ public struct Config: Codable {
         var cloudExcludedBundleIds: Set<String>?
         var redactRemoteEgress: Bool?
         var autoRecordMeetings: Bool?
+        var hasCompletedOnboarding: Bool?
     }
 
     public func save() throws {
